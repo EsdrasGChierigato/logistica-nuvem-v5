@@ -5,33 +5,32 @@ from sqlalchemy import create_engine, text
 
 # 1. Banco de Dados em Nuvem (Supabase)
 DB_URL = "postgresql+psycopg2://postgres.vtyfmfpijfjkxkrcvnoi:151060Violao16!@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
-
-# Cria o motor de comunicação com a nuvem
 engine = create_engine(DB_URL)
 
 def carregar_dados():
     try:
-        # Puxa os dados direto do Supabase via SQL
         df_bd = pd.read_sql("SELECT * FROM entregas_logistica ORDER BY data DESC", engine)
         
-        # Mapeia os nomes das colunas do banco para o nosso padrão de visualização
         df_bd = df_bd.rename(columns={
-            "id": "ID", "data": "Data", "plataforma": "Plataforma",
+            "id": "ID", "data": "Data", "plataforma": "Plataforma", "cidade": "Cidade",
             "pacotes": "Pacotes", "paradas": "Paradas", "faturamento_bruto": "Faturamento Bruto (R$)",
             "pedagio": "Pedágio (R$)", "combustivel": "Combustível (R$)",
             "tipo_combustivel": "Tipo Combustível", "consumo_kml": "Consumo (km/L)",
             "km_rodado": "KM Rodado", "hora_inicio": "Hora Início", "hora_termino": "Hora Término"
         })
         
-        # Converte formatos de data/hora para não dar erro no Streamlit
+        # Garante a leitura da cidade mesmo se a coluna estiver recém-criada e vazia
+        if "Cidade" not in df_bd.columns:
+            df_bd["Cidade"] = "Não informada"
+
         df_bd['Data'] = df_bd['Data'].astype(str)
         df_bd['Hora Início'] = df_bd['Hora Início'].astype(str)
         df_bd['Hora Término'] = df_bd['Hora Término'].astype(str)
         return df_bd
         
     except Exception as e:
-        st.error(f"⚠️Erro Tecnico:{e}" )
-        return pd.DataFrame(columns=["ID", "Data", "Plataforma", "Pacotes", "Paradas", "Faturamento Bruto (R$)", "Pedágio (R$)", "Combustível (R$)", "Tipo Combustível", "Consumo (km/L)", "KM Rodado", "Hora Início", "Hora Término"])
+        st.error(f"⚠️ Erro de Conexão: {e}")
+        return pd.DataFrame(columns=["ID", "Data", "Plataforma", "Cidade", "Pacotes", "Paradas", "Faturamento Bruto (R$)", "Pedágio (R$)", "Combustível (R$)", "Tipo Combustível", "Consumo (km/L)", "KM Rodado", "Hora Início", "Hora Término"])
 
 def calcular_horas_decimais(h_ini, h_fim):
     fmt = "%H:%M:%S"
@@ -46,34 +45,35 @@ def calcular_horas_decimais(h_ini, h_fim):
     except:
         return 0.0
 
-st.set_page_config(page_title="Logística Nuvem V5", layout="wide", page_icon="☁️")
-st.title("☁️ Gestão Logística Integrada na Nuvem")
+st.set_page_config(page_title="EGC Logística", layout="wide", page_icon="🚚")
+st.title("🚚 EGC Logística")
 st.markdown("---")
 
 df = carregar_dados()
 
-# 2. Controle de Estado (Modo Edição)
+# Controle de Estado (Modo Edição)
 if "modo_edicao" not in st.session_state:
     st.session_state.modo_edicao = False
     st.session_state.id_edicao = None
 
-# 3. Formulário Lateral
 if st.session_state.modo_edicao:
-    st.sidebar.header("✏️ Atualizar na Nuvem")
-    st.sidebar.info(f"Editando o ID: {st.session_state.id_edicao}")
+    st.sidebar.header("✏️ Editar Rota")
+    st.sidebar.info(f"ID do registro: {st.session_state.id_edicao}")
     linha_editar = df[df["ID"] == st.session_state.id_edicao].iloc[0]
     
     data_padrao = datetime.strptime(linha_editar["Data"], "%Y-%m-%d")
     plat_idx = ["Mercado Livre", "Shopee", "Outra"].index(linha_editar["Plataforma"]) if linha_editar["Plataforma"] in ["Mercado Livre", "Shopee", "Outra"] else 0
+    cidade_padrao = str(linha_editar["Cidade"]) if pd.notna(linha_editar["Cidade"]) and str(linha_editar["Cidade"]) != "None" else ""
     comb_idx = ["Gasolina", "Etanol"].index(linha_editar["Tipo Combustível"]) if linha_editar["Tipo Combustível"] in ["Gasolina", "Etanol"] else 0
     cons_idx = [7, 8, 9, 10, 11, 12].index(int(linha_editar["Consumo (km/L)"])) if int(linha_editar["Consumo (km/L)"]) in [7, 8, 9, 10, 11, 12] else 3
     
     ini_time = datetime.strptime(linha_editar["Hora Início"], "%H:%M:%S").time()
     fim_time = datetime.strptime(linha_editar["Hora Término"], "%H:%M:%S").time()
 else:
-    st.sidebar.header("📥 Lançar para a Nuvem")
+    st.sidebar.header("🗺️ Dados da Rota")
     data_padrao = datetime.now()
     plat_idx = 0
+    cidade_padrao = ""
     comb_idx = 0
     cons_idx = 3 
     ini_time = time(6, 0)
@@ -82,8 +82,9 @@ else:
 with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
     data_entrega = st.date_input("Data da Rota", data_padrao)
     plataforma = st.selectbox("Plataforma", ["Mercado Livre", "Shopee", "Outra"], index=plat_idx)
+    cidade_rota = st.text_input("📍 Cidade", value=cidade_padrao, placeholder="Ex: Valparaíso, Araçatuba...")
     
-    st.markdown("**📦 Produtividade**")
+    st.markdown("**📦 Operacional**")
     col_A, col_B = st.columns(2)
     qtd_pacotes = col_A.number_input("Pacotes", min_value=0, step=1, value=int(linha_editar["Pacotes"]) if st.session_state.modo_edicao else 0)
     qtd_paradas = col_B.number_input("Paradas", min_value=0, step=1, value=int(linha_editar["Paradas"]) if st.session_state.modo_edicao else 0)
@@ -95,7 +96,7 @@ with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
     
     st.markdown("**⛽ Veículo e Rodagem**")
     col_E, col_F = st.columns(2)
-    combustivel = col_E.number_input("Gasto Combustível (R$)", min_value=0.0, format="%.2f", value=float(linha_editar["Combustível (R$)"]) if st.session_state.modo_edicao else 0.0)
+    combustivel = col_E.number_input("Gasto Combust. (R$)", min_value=0.0, format="%.2f", value=float(linha_editar["Combustível (R$)"]) if st.session_state.modo_edicao else 0.0)
     tipo_comb = col_F.selectbox("Combustível", ["Gasolina", "Etanol"], index=comb_idx)
     
     col_km, col_cons = st.columns(2)
@@ -107,14 +108,14 @@ with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
     h_inicio = col_G.time_input("Início", ini_time)
     h_termino = col_H.time_input("Término", fim_time)
     
-    label_botao = "💾 Sincronizar Alteração" if st.session_state.modo_edicao else "🚀 Enviar para Supabase"
+    label_botao = "💾 Salvar Alterações" if st.session_state.modo_edicao else "🚀 Salvar Rota"
     botao_salvar = st.form_submit_button(label=label_botao, use_container_width=True)
 
-# Lógica de Integração com o Banco SQL
 if botao_salvar:
     nova_linha_bd = {
         "data": data_entrega.strftime("%Y-%m-%d"),
         "plataforma": plataforma,
+        "cidade": cidade_rota.strip() if cidade_rota else "Não informada",
         "pacotes": qtd_pacotes,
         "paradas": qtd_paradas,
         "faturamento_bruto": faturamento,
@@ -130,7 +131,7 @@ if botao_salvar:
     if st.session_state.modo_edicao:
         query_update = text("""
             UPDATE entregas_logistica 
-            SET data=:data, plataforma=:plataforma, pacotes=:pacotes, paradas=:paradas, 
+            SET data=:data, plataforma=:plataforma, cidade=:cidade, pacotes=:pacotes, paradas=:paradas, 
                 faturamento_bruto=:faturamento_bruto, pedagio=:pedagio, combustivel=:combustivel, 
                 tipo_combustivel=:tipo_combustivel, consumo_kml=:consumo_kml, km_rodado=:km_rodado, 
                 hora_inicio=:hora_inicio, hora_termino=:hora_termino 
@@ -149,12 +150,11 @@ if botao_salvar:
     st.rerun()
 
 if st.session_state.modo_edicao:
-    if st.sidebar.button("❌ Cancelar", use_container_width=True):
+    if st.sidebar.button("❌ Cancelar Edição", use_container_width=True):
         st.session_state.modo_edicao = False
         st.session_state.id_edicao = None
         st.rerun()
 
-# 4. Painel de Destaque Master
 total_faturamento = df["Faturamento Bruto (R$)"].sum() if not df.empty else 0.0
 total_combustivel = df["Combustível (R$)"].sum() if not df.empty else 0.0
 total_pedagio = df["Pedágio (R$)"].sum() if not df.empty else 0.0
@@ -173,7 +173,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-aba_dashboard, aba_historico = st.tabs(["📊 Dashboard Analítico", "☁️ Banco de Dados (Supabase)"])
+aba_dashboard, aba_historico = st.tabs(["📊 Dashboard Analítico", "🗄️ Histórico de Rotas"])
 
 if not df.empty:
     df["Litros_Consumidos"] = df["KM Rodado"] / df["Consumo (km/L)"]
@@ -189,20 +189,35 @@ if not df.empty:
     pacotes_hora = total_pacotes / total_horas if total_horas > 0 else 0
     custo_km = (total_combustivel + total_pedagio) / total_km if total_km > 0 else 0
     preco_litro = total_combustivel / total_litros if total_litros > 0 else 0
+    
+    lucro_por_km = lucro_liquido / total_km if total_km > 0 else 0
 
     with aba_dashboard:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("📦 Desempenho Operacional", f"{pacotes_hora:.1f} pacotes/h", f"{paradas_hora:.1f} paradas/h")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("📦 Desempenho", f"{pacotes_hora:.1f} pac/h", f"{paradas_hora:.1f} par/h")
         col2.metric("⛽ Custo de Rodagem", f"R$ {custo_km:.2f} / KM", f"{total_km:,.1f} KM Totais")
-        col3.metric("💧 Preço do Combustível", f"{total_litros:.1f} Litros consumidos", f"R$ {preco_litro:.2f} / L")
+        col3.metric("💧 Combustível", f"{total_litros:.1f} L consumidos", f"R$ {preco_litro:.2f} / L")
+        col4.metric("🏆 Lucro Médio", f"R$ {lucro_por_km:.2f} / KM", "Eficiência Geral")
         
         st.markdown("---")
-        df_grafico = df.groupby("Data")[["Faturamento Bruto (R$)", "Lucro_Linha"]].sum().reset_index()
-        st.line_chart(data=df_grafico, x="Data", y=["Faturamento Bruto (R$)", "Lucro_Linha"], use_container_width=True)
+        col_graf1, col_graf2 = st.columns(2)
+        
+        with col_graf1:
+            st.markdown("#### 📈 Evolução Financeira")
+            df_grafico = df.groupby("Data")[["Faturamento Bruto (R$)", "Lucro_Linha"]].sum().reset_index()
+            st.line_chart(data=df_grafico, x="Data", y=["Faturamento Bruto (R$)", "Lucro_Linha"], use_container_width=True)
+
+        with col_graf2:
+            st.markdown("#### 📍 Entregas por Cidade")
+            df_cidades = df[df["Cidade"] != "Não informada"]
+            if not df_cidades.empty:
+                df_cidades = df_cidades.groupby("Cidade")["Pacotes"].sum().reset_index()
+                df_cidades = df_cidades.rename(columns={"Pacotes": "Volume de Pacotes"})
+                st.bar_chart(data=df_cidades, x="Cidade", y="Volume de Pacotes", use_container_width=True)
+            else:
+                st.info("Lance a sua primeira rota com o nome da cidade para gerar este gráfico.")
 
     with aba_historico:
-        st.info("Estas informações estão hospedadas de forma segura no Supabase. Elas não serão perdidas se o PC for desligado.")
-        
         for i, row in df.iterrows():
             with st.container():
                 c_info, c_edit, c_del = st.columns([7, 1, 1])
@@ -210,11 +225,14 @@ if not df.empty:
                 tempo_str = f"{int(row['Horas_Duracao'])}h {int((row['Horas_Duracao']%1)*60)}min"
                 p_hora = row['Paradas'] / row['Horas_Duracao'] if row['Horas_Duracao'] > 0 else 0
                 
+                lucro_rota_km = row['Lucro_Linha'] / row['KM Rodado'] if row['KM Rodado'] > 0 else 0
+                cidade_exibicao = f" — 📍 **{row['Cidade']}**" if str(row['Cidade']) != "Não informada" else ""
+                
                 c_info.markdown(
-                    f"**ID {row['ID']} | {row['Data']}** — **{row['Plataforma']}** | "
+                    f"**ID {row['ID']} | {row['Data']}** — **{row['Plataforma']}** {cidade_exibicao} | "
                     f"📦 {int(row['Pacotes'])} pac. | 🛑 {int(row['Paradas'])} paradas (**{p_hora:.1f}/h**) | "
                     f"⏱️ {tempo_str} | 🛣️ {row['KM Rodado']} KM a {int(row['Consumo (km/L)'])}km/L<br>"
-                    f"💸 Faturamento: **R$ {row['Faturamento Bruto (R$)']:.2f}** | ⛽ Combustível: **R$ {row['Combustível (R$)']:.2f}**",
+                    f"💸 Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | 🏆 Lucro/KM: **R$ {lucro_rota_km:.2f}**",
                     unsafe_allow_html=True
                 )
                 
@@ -229,4 +247,4 @@ if not df.empty:
                     st.rerun()
                 st.markdown("<hr style='margin: 0.8em 0px; border: 1px solid #333;'>", unsafe_allow_html=True)
 else:
-    st.info("Nenhum dado registrado. Preencha o formulário para enviar a sua primeira rota para a nuvem!")
+    st.info("Nenhum dado registrado. Preencha o formulário para lançar a sua primeira rota!")
