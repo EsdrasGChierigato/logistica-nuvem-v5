@@ -19,7 +19,6 @@ def carregar_dados():
             "km_rodado": "KM Rodado", "hora_inicio": "Hora Início", "hora_termino": "Hora Término"
         })
         
-        # Garante a leitura da cidade mesmo se a coluna estiver recém-criada e vazia
         if "Cidade" not in df_bd.columns:
             df_bd["Cidade"] = "Não informada"
 
@@ -49,7 +48,7 @@ st.set_page_config(page_title="EGC Logística", layout="wide", page_icon="🚚")
 st.title("🚚 EGC Logística")
 st.markdown("---")
 
-df = carregar_dados()
+df_full = carregar_dados()
 
 # Controle de Estado (Modo Edição)
 if "modo_edicao" not in st.session_state:
@@ -59,7 +58,7 @@ if "modo_edicao" not in st.session_state:
 if st.session_state.modo_edicao:
     st.sidebar.header("✏️ Editar Rota")
     st.sidebar.info(f"ID do registro: {st.session_state.id_edicao}")
-    linha_editar = df[df["ID"] == st.session_state.id_edicao].iloc[0]
+    linha_editar = df_full[df_full["ID"] == st.session_state.id_edicao].iloc[0]
     
     data_padrao = datetime.strptime(linha_editar["Data"], "%Y-%m-%d")
     plat_idx = ["Mercado Livre", "Shopee", "Outra"].index(linha_editar["Plataforma"]) if linha_editar["Plataforma"] in ["Mercado Livre", "Shopee", "Outra"] else 0
@@ -155,19 +154,38 @@ if st.session_state.modo_edicao:
         st.session_state.id_edicao = None
         st.rerun()
 
+# --- NOVO: FILTRO DE MÊS ---
+st.sidebar.markdown("---")
+st.sidebar.header("📅 Fechamento Mensal")
+
+if not df_full.empty:
+    df_full['Mes_Ano'] = pd.to_datetime(df_full['Data']).dt.strftime('%m/%Y')
+    meses_disponiveis = ["Todos"] + list(df_full['Mes_Ano'].unique())
+    mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", meses_disponiveis)
+    
+    if mes_selecionado != "Todos":
+        df = df_full[df_full['Mes_Ano'] == mes_selecionado].copy()
+    else:
+        df = df_full.copy()
+else:
+    df = df_full.copy()
+    mes_selecionado = "Todos"
+
+# --- MÉTRICAS GLOBAIS (AGORA FILTRADAS) ---
 total_faturamento = df["Faturamento Bruto (R$)"].sum() if not df.empty else 0.0
 total_combustivel = df["Combustível (R$)"].sum() if not df.empty else 0.0
 total_pedagio = df["Pedágio (R$)"].sum() if not df.empty else 0.0
 lucro_liquido = total_faturamento - total_combustivel - total_pedagio
 
+# Painel de Destaque
 st.markdown(f"""
 <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px;">
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #a5d6a7;">💰 Faturamento Bruto</h3>
+        <h3 style="margin: 0; font-weight: 500; color: #a5d6a7;">💰 Faturamento Bruto ({mes_selecionado})</h3>
         <h1 style="margin: 10px 0 0 0; font-size: 3.5rem; color: #4caf50;">R$ {total_faturamento:,.2f}</h1>
     </div>
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real</h3>
+        <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real ({mes_selecionado})</h3>
         <h1 style="margin: 10px 0 0 0; font-size: 3.5rem; color: #2196f3;">R$ {lucro_liquido:,.2f}</h1>
     </div>
 </div>
@@ -189,12 +207,11 @@ if not df.empty:
     pacotes_hora = total_pacotes / total_horas if total_horas > 0 else 0
     custo_km = (total_combustivel + total_pedagio) / total_km if total_km > 0 else 0
     preco_litro = total_combustivel / total_litros if total_litros > 0 else 0
-    
     lucro_por_km = lucro_liquido / total_km if total_km > 0 else 0
 
     with aba_dashboard:
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("📦 Desempenho", f"{pacotes_hora:.1f} pac/h", f"{paradas_hora:.1f} par/h")
+        col1.metric("📦 Desempenho", f"{pacotes_hora:.1f} pac/h", f"{total_pacotes} Pac. no Mês")
         col2.metric("⛽ Custo de Rodagem", f"R$ {custo_km:.2f} / KM", f"{total_km:,.1f} KM Totais")
         col3.metric("💧 Combustível", f"{total_litros:.1f} L consumidos", f"R$ {preco_litro:.2f} / L")
         col4.metric("🏆 Lucro Médio", f"R$ {lucro_por_km:.2f} / KM", "Eficiência Geral")
@@ -216,6 +233,25 @@ if not df.empty:
                 st.bar_chart(data=df_cidades, x="Cidade", y="Volume de Pacotes", use_container_width=True)
             else:
                 st.info("Lance a sua primeira rota com o nome da cidade para gerar este gráfico.")
+                
+        # --- NOVO: BOTÃO DE EXPORTAÇÃO ---
+        st.markdown("---")
+        st.markdown("#### 📥 Exportar Resumo Mensal")
+        st.write("Baixe a planilha com os dados filtrados deste mês para montar as suas artes e relatórios.")
+        
+        # Limpa colunas de controle interno antes de exportar
+        df_export = df.drop(columns=["Mes_Ano", "Litros_Consumidos", "Horas_Duracao", "Lucro_Linha"], errors='ignore')
+        csv = df_export.to_csv(index=False).encode('utf-8')
+        
+        nome_arquivo = f"Fechamento_{mes_selecionado.replace('/', '_')}.csv" if mes_selecionado != "Todos" else "Historico_Completo.csv"
+        
+        st.download_button(
+            label="📄 Baixar Dados (CSV)",
+            data=csv,
+            file_name=nome_arquivo,
+            mime="text/csv",
+            type="primary"
+        )
 
     with aba_historico:
         for i, row in df.iterrows():
