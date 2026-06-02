@@ -109,7 +109,7 @@ def aplicativo_principal():
                 "km_rodado": "KM Rodado", "hora_inicio": "Hora Início", "hora_termino": "Hora Término"
             })
             if "Cidade" not in df_bd.columns: df_bd["Cidade"] = "Não informada"
-            df_bd['Data'] = df_bd['Data'].astype(str)
+            df_bd['Data'] = pd.to_datetime(df_bd['Data']).dt.strftime('%Y-%m-%d')
             return df_bd
         except Exception as e:
             st.error(f"Erro de Conexão: {e}")
@@ -216,19 +216,82 @@ def aplicativo_principal():
     if st.session_state.modo_edicao and st.sidebar.button("❌ Cancelar Edição", use_container_width=True):
         st.session_state.modo_edicao = False; st.session_state.id_edicao = None; st.rerun()
 
-    # --- FILTRO MENSAL ---
+    # --- LÓGICA DE FILTROS E INTELIGÊNCIA ---
     st.sidebar.markdown("---")
     mes_atual_sistema = datetime.now().strftime('%m/%Y')
     
     if not df_full.empty:
         df_full['Mes_Ano'] = pd.to_datetime(df_full['Data']).dt.strftime('%m/%Y')
-        meses_unicos = list(df_full['Mes_Ano'].unique())
+        df_full['Ano_Mes_Sort'] = pd.to_datetime(df_full['Data']).dt.strftime('%Y%m')
+        
+        meses_unicos = df_full[['Mes_Ano', 'Ano_Mes_Sort']].drop_duplicates().sort_values(by='Ano_Mes_Sort', ascending=False)['Mes_Ano'].tolist()
+        
         if mes_atual_sistema not in meses_unicos: meses_unicos.insert(0, mes_atual_sistema)
         mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", [mes_atual_sistema, "Todos"] + [m for m in meses_unicos if m != mes_atual_sistema])
         df = df_full[df_full['Mes_Ano'] == mes_selecionado].copy() if mes_selecionado != "Todos" else df_full.copy()
+        
+        # Pré-cálculo de Custos e Lucros para que os relatórios exportados já contenham essas informações
+        df["Custo_Total"] = df["Combustível (R$)"] + df["Pedágio (R$)"] + (df["KM Rodado"] * TAXA_DESGASTE_KM)
+        df["Lucro_Linha"] = df["Faturamento Bruto (R$)"] - df["Custo_Total"]
+
+        # --- CÁLCULO DE DESEMPENHO (BOLSA DE VALORES) ---
+        if mes_selecionado != "Todos" and len(meses_unicos) > 1:
+            try:
+                idx_atual = meses_unicos.index(mes_selecionado)
+                mes_anterior = meses_unicos[idx_atual + 1] if (idx_atual + 1) < len(meses_unicos) else None
+                
+                if mes_anterior:
+                    df_anterior = df_full[df_full['Mes_Ano'] == mes_anterior]
+                    fat_anterior = df_anterior["Faturamento Bruto (R$)"].sum()
+                    lucro_anterior = fat_anterior - (df_anterior["Combustível (R$)"].sum() + df_anterior["Pedágio (R$)"].sum() + (df_anterior["KM Rodado"].sum() * TAXA_DESGASTE_KM))
+                    rotas_anterior = len(df_anterior)
+                else:
+                    fat_anterior, lucro_anterior, rotas_anterior = 0, 0, 0
+            except:
+                 fat_anterior, lucro_anterior, rotas_anterior = 0, 0, 0
+        else:
+            fat_anterior, lucro_anterior, rotas_anterior = 0, 0, 0
+            
+        # --- CÁLCULO DO PÓDIO (MAIOR E MENOR MÊS) ---
+        df_agrupado_mes = df_full.groupby('Mes_Ano')['Faturamento Bruto (R$)'].sum().reset_index()
+        if not df_agrupado_mes.empty and len(df_agrupado_mes) > 0:
+            mes_maior_fatura = df_agrupado_mes.loc[df_agrupado_mes['Faturamento Bruto (R$)'].idxmax()]
+            mes_menor_fatura = df_agrupado_mes.loc[df_agrupado_mes['Faturamento Bruto (R$)'].idxmin()]
+            
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("### 🏆 Inteligência Estratégica")
+            st.sidebar.success(f"**Melhor Mês:** {mes_maior_fatura['Mes_Ano']}\n\nR$ {mes_maior_fatura['Faturamento Bruto (R$)']:,.2f}")
+            if len(df_agrupado_mes) > 1:
+                st.sidebar.error(f"**Menor Mês:** {mes_menor_fatura['Mes_Ano']}\n\nR$ {mes_menor_fatura['Faturamento Bruto (R$)']:,.2f}")
+                
+        # --- EXPORTAÇÃO DE RELATÓRIOS (RESTABELECIDA) ---
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 📥 Exportar Dados")
+        
+        # Criação do CSV Total
+        csv_total = df.drop(columns=['Mes_Ano', 'Ano_Mes_Sort', 'usuario_id'], errors='ignore').to_csv(index=False).encode('utf-8')
+        st.sidebar.download_button(
+            label="⬇️ Relatório Mensal (CSV)",
+            data=csv_total,
+            file_name=f"relatorio_logistica_{mes_selecionado.replace('/','_')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        
+        # Criação do CSV por Plataforma
+        df_plat_export = df.groupby("Plataforma")[["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"]].sum().reset_index()
+        csv_plat = df_plat_export.to_csv(index=False).encode('utf-8')
+        st.sidebar.download_button(
+            label="⬇️ Resumo Plataformas (CSV)",
+            data=csv_plat,
+            file_name=f"resumo_plataforma_{mes_selecionado.replace('/','_')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
     else:
         df = pd.DataFrame()
         mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", [mes_atual_sistema, "Todos"])
+        fat_anterior, lucro_anterior, rotas_anterior = 0, 0, 0
 
     # --- MÉTRICAS GLOBAIS DA TELA ---
     t_fat = df["Faturamento Bruto (R$)"].sum() if not df.empty else 0.0
@@ -238,31 +301,29 @@ def aplicativo_principal():
     t_gastos = t_comb + t_ped + (t_km * TAXA_DESGASTE_KM)
     t_lucro = t_fat - t_gastos
     
-    # NOVAS MÉTRICAS DE ESFORÇO OPERACIONAL
     qtd_rotas = len(df)
     total_pacotes = int(df["Pacotes"].sum()) if not df.empty else 0
 
-    st.markdown(f"""
-    <div style="display: flex; gap: 20px; margin-bottom: 25px;">
-        <div style="flex: 1; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #4caf50; text-align: center;">
-            <h4 style="margin:0; color:#a5d6a7;">Faturamento Bruto</h4>
-            <h2 style="margin:5px 0 0 0; color:#4caf50;">R$ {t_fat:,.2f}</h2>
-        </div>
-        <div style="flex: 1; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #f44336; text-align: center;">
-            <h4 style="margin:0; color:#ef9a9a;">Gastos Operacionais</h4>
-            <h2 style="margin:5px 0 0 0; color:#f44336;">R$ {t_gastos:,.2f}</h2>
-        </div>
-        <div style="flex: 1; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #2196f3; text-align: center;">
-            <h4 style="margin:0; color:#90caf9;">Lucro Líquido</h4>
-            <h2 style="margin:5px 0 0 0; color:#2196f3;">R$ {t_lucro:,.2f}</h2>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    def calc_delta(atual, anterior):
+        if anterior == 0 and atual > 0: return "100%"
+        if anterior == 0 and atual == 0: return "0%"
+        var = ((atual - anterior) / anterior) * 100
+        return f"{var:,.1f}%"
+
+    delta_fat = calc_delta(t_fat, fat_anterior) if mes_selecionado != "Todos" and fat_anterior != 0 else None
+    delta_lucro = calc_delta(t_lucro, lucro_anterior) if mes_selecionado != "Todos" and lucro_anterior != 0 else None
+    delta_rotas = calc_delta(qtd_rotas, rotas_anterior) if mes_selecionado != "Todos" and rotas_anterior != 0 else None
+
+    st.markdown("### 💰 Resultado Financeiro")
+    col_fin1, col_fin2, col_fin3 = st.columns(3)
+    col_fin1.metric("Faturamento Bruto", f"R$ {t_fat:,.2f}", delta_fat)
+    col_fin2.metric("Gastos Operacionais", f"R$ {t_gastos:,.2f}", delta=None) 
+    col_fin3.metric("Lucro Líquido Real", f"R$ {t_lucro:,.2f}", delta_lucro)
     
-    # BLOCO DE RESUMO FÍSICO/OPERACIONAL
+    st.markdown("---")
     st.markdown("### 📦 Esforço Operacional")
     col_op1, col_op2, col_op3 = st.columns(3)
-    col_op1.metric("🚚 Rotas Realizadas", f"{qtd_rotas} rotas")
+    col_op1.metric("🚚 Rotas Realizadas", f"{qtd_rotas} rotas", delta_rotas)
     col_op2.metric("📦 Volume Entregue", f"{total_pacotes} pacotes")
     col_op3.metric("🛣️ Distância Percorrida", f"{t_km:,.1f} KM")
     st.markdown("<br>", unsafe_allow_html=True)
@@ -270,9 +331,6 @@ def aplicativo_principal():
     aba_dash, aba_hist = st.tabs(["📊 Dashboard Analítico", "🗄️ Histórico de Rotas"])
 
     if not df.empty:
-        df["Custo_Total"] = df["Combustível (R$)"] + df["Pedágio (R$)"] + (df["KM Rodado"] * TAXA_DESGASTE_KM)
-        df["Lucro_Linha"] = df["Faturamento Bruto (R$)"] - df["Custo_Total"]
-        
         with aba_dash:
             col_g1, col_g2 = st.columns(2)
             with col_g1:
