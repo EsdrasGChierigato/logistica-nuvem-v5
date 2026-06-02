@@ -283,17 +283,17 @@ def aplicativo_principal():
     qtd_rotas = len(df)
     total_pacotes = int(df["Pacotes"].sum()) if not df.empty else 0
 
-    # MOTOR INTELIGENTE DE DELTA (Padrão Bolsa de Valores)
+    # MOTOR INTELIGENTE DE DELTA (Padrão Bolsa de Valores - LINHA ÚNICA)
     def get_delta_info(atual, anterior, invertido=False):
         if anterior == 0 and atual > 0: val = 100.0
         elif anterior == 0 and atual == 0: val = 0.0
         else: val = ((atual - anterior) / anterior) * 100
 
         if val > 0:
-            cor = "#f44336" if invertido else "#4caf50" # Se for gasto invertido, aumento é vermelho
+            cor = "#f44336" if invertido else "#4caf50" 
             ic = "⬆️"
         elif val < 0:
-            cor = "#4caf50" if invertido else "#f44336" # Se for gasto invertido, queda é verde
+            cor = "#4caf50" if invertido else "#f44336" 
             ic = "⬇️"
         else:
             cor = "#9e9e9e"
@@ -307,15 +307,10 @@ def aplicativo_principal():
     c_pac, i_pac, v_pac = get_delta_info(total_pacotes, pacotes_anterior)
     c_km, i_km, v_km = get_delta_info(t_km, km_anterior, invertido=True)
 
+    # HTML MINIFICADO (Sem quebras de linha para evitar erro no Streamlit)
     def formatar_html_delta(cor, icone, valor, exibir):
-        if not exibir: return '<div style="height: 24px;"></div>'
-        return f'''
-        <div style="margin-top: 8px;">
-            <span style="background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px; font-size: 0.9rem; font-weight: bold; color: {cor};">
-                {icone} {valor}% <span style="font-size: 0.75rem; color: #94a3b8; font-weight: normal;">vs mês ant.</span>
-            </span>
-        </div>
-        '''
+        if not exibir: return "<div style='height: 24px;'></div>"
+        return f"<div style='margin-top: 8px;'><span style='background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px; font-size: 0.9rem; font-weight: bold; color: {cor};'>{icone} {valor}% <span style='font-size: 0.75rem; color: #94a3b8; font-weight: normal;'>vs mês ant.</span></span></div>"
 
     exibir_deltas = mes_selecionado != "Todos"
     html_delta_fat = formatar_html_delta(c_fat, i_fat, v_fat, exibir_deltas)
@@ -325,49 +320,13 @@ def aplicativo_principal():
     html_delta_pac = formatar_html_delta(c_pac, i_pac, v_pac, exibir_deltas)
     html_delta_km = formatar_html_delta(c_km, i_km, v_km, exibir_deltas)
 
-    # RENDENRIZAÇÃO DOS CARTÕES FINANCEIROS HTML (Design Centralizado com Cores e Deltas Separados)
+    # RENDENRIZAÇÃO DOS CARTÕES FINANCEIROS HTML MINIFICADO
     st.markdown("### 💰 Resultado Financeiro")
-    st.markdown(f"""
-    <div style="display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap;">
-        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            <h4 style="margin:0; color:#a5d6a7; font-weight: 500;">Faturamento Bruto</h4>
-            <h2 style="margin:10px 0 5px 0; color:#4caf50; font-size: 2.2rem;">R$ {t_fat:,.2f}</h2>
-            {html_delta_fat}
-        </div>
-        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #f44336; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            <h4 style="margin:0; color:#ef9a9a; font-weight: 500;">Gastos Operacionais</h4>
-            <h2 style="margin:10px 0 5px 0; color:#f44336; font-size: 2.2rem;">R$ {t_gastos:,.2f}</h2>
-            {html_delta_gas}
-        </div>
-        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            <h4 style="margin:0; color:#90caf9; font-weight: 500;">Lucro Líquido Real</h4>
-            <h2 style="margin:10px 0 5px 0; color:#2196f3; font-size: 2.2rem;">R$ {t_lucro:,.2f}</h2>
-            {html_delta_luc}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"<div style='display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap;'><div style='flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'><h4 style='margin:0; color:#a5d6a7; font-weight: 500;'>Faturamento Bruto</h4><h2 style='margin:10px 0 5px 0; color:#4caf50; font-size: 2.2rem;'>R$ {t_fat:,.2f}</h2>{html_delta_fat}</div><div style='flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #f44336; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'><h4 style='margin:0; color:#ef9a9a; font-weight: 500;'>Gastos Operacionais</h4><h2 style='margin:10px 0 5px 0; color:#f44336; font-size: 2.2rem;'>R$ {t_gastos:,.2f}</h2>{html_delta_gas}</div><div style='flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'><h4 style='margin:0; color:#90caf9; font-weight: 500;'>Lucro Líquido Real</h4><h2 style='margin:10px 0 5px 0; color:#2196f3; font-size: 2.2rem;'>R$ {t_lucro:,.2f}</h2>{html_delta_luc}</div></div>", unsafe_allow_html=True)
     
-    # RENDENRIZAÇÃO DOS CARTÕES OPERACIONAIS HTML (Design Centralizado com Cores e Deltas Separados)
+    # RENDENRIZAÇÃO DOS CARTÕES OPERACIONAIS HTML MINIFICADO
     st.markdown("### 📦 Indicadores de Produtividade")
-    st.markdown(f"""
-    <div style="display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap;">
-        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #ff9800; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            <h4 style="margin:0; color:#ffcc80; font-weight: 500;">Rotas Concluídas</h4>
-            <h2 style="margin:10px 0 5px 0; color:#ff9800; font-size: 2.2rem;">{qtd_rotas}</h2>
-            {html_delta_rot}
-        </div>
-        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #9c27b0; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            <h4 style="margin:0; color:#ce93d8; font-weight: 500;">Volume Entregue</h4>
-            <h2 style="margin:10px 0 5px 0; color:#9c27b0; font-size: 2.2rem;">{total_pacotes} pacotes</h2>
-            {html_delta_pac}
-        </div>
-        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #ff5722; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            <h4 style="margin:0; color:#ffab91; font-weight: 500;">Distância Percorrida</h4>
-            <h2 style="margin:10px 0 5px 0; color:#ff5722; font-size: 2.2rem;">{t_km:,.1f} KM</h2>
-            {html_delta_km}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"<div style='display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap;'><div style='flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #ff9800; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'><h4 style='margin:0; color:#ffcc80; font-weight: 500;'>Rotas Concluídas</h4><h2 style='margin:10px 0 5px 0; color:#ff9800; font-size: 2.2rem;'>{qtd_rotas}</h2>{html_delta_rot}</div><div style='flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #9c27b0; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'><h4 style='margin:0; color:#ce93d8; font-weight: 500;'>Volume Entregue</h4><h2 style='margin:10px 0 5px 0; color:#9c27b0; font-size: 2.2rem;'>{total_pacotes} pacotes</h2>{html_delta_pac}</div><div style='flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #ff5722; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'><h4 style='margin:0; color:#ffab91; font-weight: 500;'>Distância Percorrida</h4><h2 style='margin:10px 0 5px 0; color:#ff5722; font-size: 2.2rem;'>{t_km:,.1f} KM</h2>{html_delta_km}</div></div>", unsafe_allow_html=True)
 
     aba_dash, aba_hist = st.tabs(["📊 Dashboard Analítico", "🗄️ Histórico de Rotas"])
 
