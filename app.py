@@ -7,9 +7,9 @@ from sqlalchemy import create_engine, text
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="EGC Logística App", layout="wide", page_icon="🚚")
 
-# --- CONEXÃO COM O BANCO ---
-DB_URL = "postgresql+psycopg2://postgres.vtyfmfpijfjkxkrcvnoi:151060Violao16!@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
-engine = create_engine(DB_URL)
+# --- CONEXÃO COM O BANCO BLINDADA ---
+DB_URL = "postgresql+psycopg2://postgres.vtyfmfpijfjkxkrcvnoi:151060Violao16!@aws-1-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require"
+engine = create_engine(DB_URL, pool_pre_ping=True, connect_args={'connect_timeout': 15})
 TAXA_DESGASTE_KM = 0.35
 
 # --- FUNÇÕES DE SEGURANÇA E AUTENTICAÇÃO ---
@@ -174,7 +174,7 @@ def aplicativo_principal():
     if btn_salvar:
         custo_combustivel_total = (km_rodado / consumo_carro) * preco_litro_input if consumo_carro > 0 else 0
         nova_linha_bd = {
-            "usuario_id": st.session_state.usuario_id, # Injeta o dono da rota
+            "usuario_id": st.session_state.usuario_id, 
             "data": data_entrega.strftime("%Y-%m-%d"), "plataforma": plataforma, "cidade": cidade_rota.strip() if cidade_rota else "Não informada",
             "pacotes": qtd_pacotes, "paradas": qtd_paradas, "faturamento_bruto": faturamento, "pedagio": pedagio,
             "combustivel": custo_combustivel_total, "tipo_combustivel": tipo_comb, "consumo_kml": consumo_carro,
@@ -189,7 +189,7 @@ def aplicativo_principal():
                     tipo_combustivel=:tipo_combustivel, consumo_kml=:consumo_kml, km_rodado=:km_rodado, 
                     hora_inicio=:hora_inicio, hora_termino=:hora_termino 
                 WHERE id=:id AND usuario_id=:usuario_id
-            """) # Segurança Extra: Só edita se a rota pertencer ao usuário logado
+            """) 
             nova_linha_bd["id"] = int(st.session_state.id_edicao)
             with engine.begin() as conn: conn.execute(query_update, nova_linha_bd)
             st.session_state.modo_edicao = False
@@ -201,7 +201,7 @@ def aplicativo_principal():
     if st.session_state.modo_edicao and st.sidebar.button("❌ Cancelar", use_container_width=True):
         st.session_state.modo_edicao = False; st.session_state.id_edicao = None; st.rerun()
 
-    # --- FILTRO MENSAL (Lógica de Isolamento Mantida) ---
+    # --- FILTRO MENSAL ---
     st.sidebar.markdown("---")
     mes_atual_sistema = datetime.now().strftime('%m/%Y')
     
