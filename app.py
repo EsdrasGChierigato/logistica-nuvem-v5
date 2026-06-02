@@ -9,7 +9,6 @@ from sqlalchemy.pool import NullPool
 st.set_page_config(page_title="EGC Logística App", layout="wide", page_icon="🚚")
 
 # --- CONEXÃO COM O BANCO BLINDADA (NULLPOOL) ---
-# O NullPool impede que o Python tente reutilizar conexões mortas pelo Supabase.
 DB_URL = "postgresql+psycopg2://postgres.vtyfmfpijfjkxkrcvnoi:151060Violao16!@aws-1-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require"
 engine = create_engine(DB_URL, poolclass=NullPool, connect_args={'connect_timeout': 15})
 TAXA_DESGASTE_KM = 0.35
@@ -133,18 +132,15 @@ def aplicativo_principal():
     if st.session_state.modo_edicao:
         st.sidebar.header("✏️ Editar Rota")
         try:
-            # Filtro blindado para garantir que não puxe dados de ID inexistente
             linha_editar = df_full[df_full["ID"] == int(st.session_state.id_edicao)].iloc[0]
             data_padrao = datetime.strptime(linha_editar["Data"], "%Y-%m-%d")
             plat_idx = ["Mercado Livre", "Shopee", "Outra"].index(linha_editar["Plataforma"]) if linha_editar["Plataforma"] in ["Mercado Livre", "Shopee", "Outra"] else 0
             cidade_padrao = str(linha_editar["Cidade"]) if str(linha_editar["Cidade"]) != "None" else ""
             comb_idx = 0 if linha_editar["Tipo Combustível"] == "Gasolina" else 1
             
-            # Tratamento de segurança para conversão de números
             try: cons_idx = [7, 8, 9, 10, 11, 12].index(int(linha_editar["Consumo (km/L)"]))
             except: cons_idx = 3
             
-            # Tratamento de segurança para conversão de tempo
             try: ini_time = datetime.strptime(str(linha_editar["Hora Início"]), "%H:%M:%S").time()
             except: ini_time = time(6,0)
             
@@ -241,6 +237,10 @@ def aplicativo_principal():
     t_km = df["KM Rodado"].sum() if not df.empty else 0.0
     t_gastos = t_comb + t_ped + (t_km * TAXA_DESGASTE_KM)
     t_lucro = t_fat - t_gastos
+    
+    # NOVAS MÉTRICAS DE ESFORÇO OPERACIONAL
+    qtd_rotas = len(df)
+    total_pacotes = int(df["Pacotes"].sum()) if not df.empty else 0
 
     st.markdown(f"""
     <div style="display: flex; gap: 20px; margin-bottom: 25px;">
@@ -258,6 +258,14 @@ def aplicativo_principal():
         </div>
     </div>
     """, unsafe_allow_html=True)
+    
+    # BLOCO DE RESUMO FÍSICO/OPERACIONAL
+    st.markdown("### 📦 Esforço Operacional")
+    col_op1, col_op2, col_op3 = st.columns(3)
+    col_op1.metric("🚚 Rotas Realizadas", f"{qtd_rotas} rotas")
+    col_op2.metric("📦 Volume Entregue", f"{total_pacotes} pacotes")
+    col_op3.metric("🛣️ Distância Percorrida", f"{t_km:,.1f} KM")
+    st.markdown("<br>", unsafe_allow_html=True)
 
     aba_dash, aba_hist = st.tabs(["📊 Dashboard Analítico", "🗄️ Histórico de Rotas"])
 
