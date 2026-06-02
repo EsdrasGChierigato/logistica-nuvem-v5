@@ -244,6 +244,23 @@ if not df.empty:
                 st.bar_chart(data=df_cidades, x="Cidade", y="Volume de Pacotes", use_container_width=True)
             else:
                 st.info("Lance a sua primeira rota com o nome da cidade para gerar este gráfico.")
+        
+        # --- NOVO: GRÁFICO POR PLATAFORMA ---
+        st.markdown("---")
+        st.markdown("#### 🏢 Desempenho por Plataforma")
+        
+        df_plataforma = df.groupby("Plataforma")[["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"]].sum().reset_index()
+        df_plataforma = df_plataforma.rename(columns={
+            "Faturamento Bruto (R$)": "Faturamento Bruto",
+            "Custo_Total": "Gastos Operacionais",
+            "Lucro_Linha": "Lucro Líquido Real"
+        })
+        
+        st.bar_chart(
+            data=df_plataforma.set_index("Plataforma"),
+            color=["#4caf50", "#f44336", "#2196f3"],
+            use_container_width=True
+        )
                 
         st.markdown("---")
         st.markdown("#### 📥 Exportar Resumo Mensal")
