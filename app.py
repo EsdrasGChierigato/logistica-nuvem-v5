@@ -178,17 +178,23 @@ total_pedagio = df["Pedágio (R$)"].sum() if not df.empty else 0.0
 total_km_global = df["KM Rodado"].sum() if not df.empty else 0.0
 
 total_desgaste_manutencao = total_km_global * TAXA_DESGASTE_KM
-lucro_liquido_real = total_faturamento - total_combustivel - total_pedagio - total_desgaste_manutencao
+total_gastos = total_combustivel + total_pedagio + total_desgaste_manutencao
+lucro_liquido_real = total_faturamento - total_gastos
 
+# --- PAINEL VISUAL DE 3 BLOCOS (Bruto, Gastos, Líquido) ---
 st.markdown(f"""
 <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px;">
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
         <h3 style="margin: 0; font-weight: 500; color: #a5d6a7;">💰 Faturamento Bruto ({mes_selecionado})</h3>
-        <h1 style="margin: 10px 0 0 0; font-size: 3.5rem; color: #4caf50;">R$ {total_faturamento:,.2f}</h1>
+        <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #4caf50;">R$ {total_faturamento:,.2f}</h1>
+    </div>
+    <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #f44336; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <h3 style="margin: 0; font-weight: 500; color: #ef9a9a;">🔻 Gastos Operacionais ({mes_selecionado})</h3>
+        <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #f44336;">R$ {total_gastos:,.2f}</h1>
     </div>
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
         <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real ({mes_selecionado})</h3>
-        <h1 style="margin: 10px 0 0 0; font-size: 3.5rem; color: #2196f3;">R$ {lucro_liquido_real:,.2f}</h1>
+        <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #2196f3;">R$ {lucro_liquido_real:,.2f}</h1>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -210,7 +216,7 @@ if not df.empty:
     
     paradas_hora = df["Paradas"].sum() / total_horas if total_horas > 0 else 0
     pacotes_hora = total_pacotes / total_horas if total_horas > 0 else 0
-    custo_km = (total_combustivel + total_pedagio + total_desgaste_manutencao) / total_km_global if total_km_global > 0 else 0
+    custo_km = total_gastos / total_km_global if total_km_global > 0 else 0
     preco_litro = total_combustivel / total_litros if total_litros > 0 else 0
     lucro_por_km = lucro_liquido_real / total_km_global if total_km_global > 0 else 0
 
@@ -226,8 +232,8 @@ if not df.empty:
         
         with col_graf1:
             st.markdown("#### 📈 Evolução Financeira Real")
-            df_grafico = df.groupby("Data")[["Faturamento Bruto (R$)", "Lucro_Linha"]].sum().reset_index()
-            st.line_chart(data=df_grafico, x="Data", y=["Faturamento Bruto (R$)", "Lucro_Linha"], use_container_width=True)
+            df_grafico = df.groupby("Data")[["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"]].sum().reset_index()
+            st.line_chart(data=df_grafico, x="Data", y=["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"], color=["#4caf50", "#f44336", "#2196f3"], use_container_width=True)
 
         with col_graf2:
             st.markdown("#### 📍 Entregas por Cidade")
@@ -271,7 +277,7 @@ if not df.empty:
                     f"**ID {row['ID']} | {row['Data']}** — **{row['Plataforma']}** {cidade_exibicao} | "
                     f"📦 {int(row['Pacotes'])} pac. | 🛑 {int(row['Paradas'])} paradas (**{p_hora:.1f}/h**) | "
                     f"⏱️ {tempo_str} | 🛣️ {row['KM Rodado']} KM a {int(row['Consumo (km/L)'])}km/L<br>"
-                    f"💸 Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | 🛠️ Desgaste: **R$ {row['Custo_Desgaste']:.2f}** | 🏆 Lucro/KM Real: **R$ {lucro_rota_km:.2f}**",
+                    f"💸 Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | 🛠️ Gastos: **R$ {row['Custo_Total']:.2f}** | 🏆 Lucro/KM Real: **R$ {lucro_rota_km:.2f}**",
                     unsafe_allow_html=True
                 )
                 
