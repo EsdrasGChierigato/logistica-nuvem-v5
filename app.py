@@ -33,10 +33,12 @@ def cadastrar_usuario(nome, email, senha):
     except Exception as e:
         return False
 
-# --- GERENCIAMENTO DE ESTADO (SESSION) ---
+# --- GERENCIAMENTO DE ESTADO (SESSION) BLINDADO ---
 if "logado" not in st.session_state:
     st.session_state.logado = False
+if "usuario_id" not in st.session_state:
     st.session_state.usuario_id = None
+if "usuario_nome" not in st.session_state:
     st.session_state.usuario_nome = ""
 
 # --- TELAS DE ACESSO ---
@@ -93,7 +95,6 @@ def aplicativo_principal():
     st.title("🚚 Painel Operacional")
     st.markdown("---")
 
-    # A MAGIA ACONTECE AQUI: Puxa SÓ os dados do usuario_id logado
     def carregar_dados_usuario(uid):
         try:
             query = text("SELECT * FROM entregas_logistica WHERE usuario_id = :uid ORDER BY data DESC")
