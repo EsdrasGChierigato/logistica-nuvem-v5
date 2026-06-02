@@ -70,7 +70,6 @@ if st.session_state.modo_edicao:
     ini_time = datetime.strptime(linha_editar["Hora Início"], "%H:%M:%S").time()
     fim_time = datetime.strptime(linha_editar["Hora Término"], "%H:%M:%S").time()
     
-    # Faz a engenharia reversa para descobrir qual era o preço do litro quando a rota foi salva
     km_edit = float(linha_editar["KM Rodado"])
     cons_edit = int(linha_editar["Consumo (km/L)"])
     comb_total_edit = float(linha_editar["Combustível (R$)"])
@@ -79,7 +78,6 @@ if st.session_state.modo_edicao:
         preco_litro_padrao = comb_total_edit / litros_edit if litros_edit > 0 else 5.80
     else:
         preco_litro_padrao = 5.80
-
 else:
     st.sidebar.header("🗺️ Dados da Rota")
     data_padrao = datetime.now()
@@ -124,7 +122,6 @@ with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
     botao_salvar = st.form_submit_button(label=label_botao, use_container_width=True)
 
 if botao_salvar:
-    # A IA do sistema agora calcula o Gasto Total de Combustível sozinha para salvar no banco
     litros_gastos = km_rodado / consumo_carro if consumo_carro > 0 else 0
     custo_combustivel_total = litros_gastos * preco_litro_input
 
@@ -136,7 +133,7 @@ if botao_salvar:
         "paradas": qtd_paradas,
         "faturamento_bruto": faturamento,
         "pedagio": pedagio,
-        "combustivel": custo_combustivel_total, # Salva o custo matematicamente correto
+        "combustivel": custo_combustivel_total, 
         "tipo_combustivel": tipo_comb,
         "consumo_kml": consumo_carro,
         "km_rodado": km_rodado,
@@ -174,9 +171,16 @@ if st.session_state.modo_edicao:
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Fechamento Mensal")
 
+mes_atual_sistema = datetime.now().strftime('%m/%Y')
+
 if not df_full.empty:
     df_full['Mes_Ano'] = pd.to_datetime(df_full['Data']).dt.strftime('%m/%Y')
-    meses_disponiveis = ["Todos"] + list(df_full['Mes_Ano'].unique())
+    meses_unicos = list(df_full['Mes_Ano'].unique())
+    
+    if mes_atual_sistema not in meses_unicos:
+        meses_unicos.insert(0, mes_atual_sistema)
+        
+    meses_disponiveis = [mes_atual_sistema, "Todos"] + [m for m in meses_unicos if m != mes_atual_sistema]
     mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", meses_disponiveis)
     
     if mes_selecionado != "Todos":
@@ -185,9 +189,9 @@ if not df_full.empty:
         df = df_full.copy()
 else:
     df = df_full.copy()
-    mes_selecionado = "Todos"
+    meses_disponiveis = [mes_atual_sistema, "Todos"]
+    mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", meses_disponiveis)
 
-# --- INTELIGÊNCIA FINANCEIRA CALCULADA ---
 total_faturamento = df["Faturamento Bruto (R$)"].sum() if not df.empty else 0.0
 total_combustivel = df["Combustível (R$)"].sum() if not df.empty else 0.0
 total_pedagio = df["Pedágio (R$)"].sum() if not df.empty else 0.0
@@ -197,19 +201,18 @@ total_desgaste_manutencao = total_km_global * TAXA_DESGASTE_KM
 total_gastos = total_combustivel + total_pedagio + total_desgaste_manutencao
 lucro_liquido_real = total_faturamento - total_gastos
 
-# --- PAINEL VISUAL DE 3 BLOCOS (Bruto, Gastos, Líquido) ---
 st.markdown(f"""
 <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px;">
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #a5d6a7;">💰 Faturamento Bruto</h3>
+        <h3 style="margin: 0; font-weight: 500; color: #a5d6a7;">💰 Faturamento Bruto ({mes_selecionado})</h3>
         <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #4caf50;">R$ {total_faturamento:,.2f}</h1>
     </div>
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #f44336; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #ef9a9a;">🔻 Gastos Operacionais</h3>
+        <h3 style="margin: 0; font-weight: 500; color: #ef9a9a;">🔻 Gastos Operacionais ({mes_selecionado})</h3>
         <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #f44336;">R$ {total_gastos:,.2f}</h1>
     </div>
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real</h3>
+        <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real ({mes_selecionado})</h3>
         <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #2196f3;">R$ {lucro_liquido_real:,.2f}</h1>
     </div>
 </div>
@@ -278,21 +281,63 @@ if not df.empty:
             use_container_width=True
         )
                 
+        # --- NOVO: GERADOR DE RELATÓRIOS INTELIGENTE ---
         st.markdown("---")
-        st.markdown("#### 📥 Exportar Resumo Mensal")
+        st.markdown("#### 📥 Central de Relatórios do Mês")
+        st.write("Exporte a inteligência de negócios da sua operação já formatada e calculada.")
         
-        df_export = df.drop(columns=["Mes_Ano", "Litros_Consumidos", "Horas_Duracao", "Lucro_Linha", "Custo_Total", "Custo_Desgaste"], errors='ignore')
-        csv = df_export.to_csv(index=False).encode('utf-8')
+        col_btn1, col_btn2 = st.columns(2)
         
-        nome_arquivo = f"Fechamento_{mes_selecionado.replace('/', '_')}.csv" if mes_selecionado != "Todos" else "Historico_Completo.csv"
+        # 1. Exportação Detalhada (Com as colunas inteligentes)
+        df_detalhado = df.copy()
+        df_detalhado = df_detalhado.rename(columns={
+            "Custo_Total": "Gastos Totais (R$)",
+            "Lucro_Linha": "Lucro Líquido Real (R$)",
+            "Custo_Desgaste": "Desgaste Veículo (R$)",
+            "Litros_Consumidos": "Litros Consumidos",
+            "Horas_Duracao": "Horas Trabalhadas"
+        }).drop(columns=["Mes_Ano"], errors='ignore')
         
-        st.download_button(
-            label="📄 Baixar Dados (CSV)",
-            data=csv,
-            file_name=nome_arquivo,
-            mime="text/csv",
-            type="primary"
-        )
+        csv_detalhado = df_detalhado.to_csv(index=False).encode('utf-8')
+        nome_detalhado = f"Detalhado_{mes_selecionado.replace('/', '_')}.csv" if mes_selecionado != "Todos" else "Detalhado_Completo.csv"
+        
+        with col_btn1:
+            st.download_button(
+                label="📄 Baixar Histórico Detalhado (Todas as Rotas)",
+                data=csv_detalhado,
+                file_name=nome_detalhado,
+                mime="text/csv",
+                type="secondary",
+                use_container_width=True
+            )
+            
+        # 2. Exportação Consolidada por Plataforma
+        df_resumo_plat = df.groupby("Plataforma").agg({
+            "Faturamento Bruto (R$)": "sum",
+            "Custo_Total": "sum",
+            "Lucro_Linha": "sum",
+            "KM Rodado": "sum",
+            "Pacotes": "sum",
+            "Paradas": "sum"
+        }).reset_index()
+        
+        df_resumo_plat = df_resumo_plat.rename(columns={
+            "Custo_Total": "Gastos Operacionais (R$)",
+            "Lucro_Linha": "Lucro Líquido Real (R$)"
+        })
+        
+        csv_resumo = df_resumo_plat.to_csv(index=False).encode('utf-8')
+        nome_resumo = f"Resumo_Plataformas_{mes_selecionado.replace('/', '_')}.csv" if mes_selecionado != "Todos" else "Resumo_Plataformas_Completo.csv"
+        
+        with col_btn2:
+            st.download_button(
+                label="📊 Baixar Resumo por Plataforma (Consolidado)",
+                data=csv_resumo,
+                file_name=nome_resumo,
+                mime="text/csv",
+                type="primary",
+                use_container_width=True
+            )
 
     with aba_historico:
         for i, row in df.iterrows():
@@ -305,7 +350,6 @@ if not df.empty:
                 lucro_rota_km = row['Lucro_Linha'] / row['KM Rodado'] if row['KM Rodado'] > 0 else 0
                 cidade_exibicao = f" — 📍 **{row['Cidade']}**" if str(row['Cidade']) != "Não informada" else ""
                 
-                # Para mostrar o preço do litro exato que foi usado nesta rota específica
                 preco_litro_rota = row['Combustível (R$)'] / row['Litros_Consumidos'] if row['Litros_Consumidos'] > 0 else 0
                 
                 c_info.markdown(
@@ -327,4 +371,4 @@ if not df.empty:
                     st.rerun()
                 st.markdown("<hr style='margin: 0.8em 0px; border: 1px solid #333;'>", unsafe_allow_html=True)
 else:
-    st.info("Nenhum dado registrado. Preencha o formulário para lançar a sua primeira rota!")
+    st.info(f"Nenhum dado registrado para {mes_selecionado}. Preencha o formulário para lançar a sua primeira rota deste mês!")
