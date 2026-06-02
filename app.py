@@ -7,6 +7,8 @@ from sqlalchemy import create_engine, text
 DB_URL = "postgresql+psycopg2://postgres.vtyfmfpijfjkxkrcvnoi:151060Violao16!@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
 engine = create_engine(DB_URL)
 
+TAXA_DESGASTE_KM = 0.35  # Taxa de manutenção/depreciação por KM rodado
+
 def carregar_dados():
     try:
         df_bd = pd.read_sql("SELECT * FROM entregas_logistica ORDER BY data DESC", engine)
@@ -50,7 +52,6 @@ st.markdown("---")
 
 df_full = carregar_dados()
 
-# Controle de Estado (Modo Edição)
 if "modo_edicao" not in st.session_state:
     st.session_state.modo_edicao = False
     st.session_state.id_edicao = None
@@ -154,7 +155,6 @@ if st.session_state.modo_edicao:
         st.session_state.id_edicao = None
         st.rerun()
 
-# --- NOVO: FILTRO DE MÊS ---
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Fechamento Mensal")
 
@@ -171,13 +171,15 @@ else:
     df = df_full.copy()
     mes_selecionado = "Todos"
 
-# --- MÉTRICAS GLOBAIS (AGORA FILTRADAS) ---
+# --- INTELIGÊNCIA FINANCEIRA CALCULADA ---
 total_faturamento = df["Faturamento Bruto (R$)"].sum() if not df.empty else 0.0
 total_combustivel = df["Combustível (R$)"].sum() if not df.empty else 0.0
 total_pedagio = df["Pedágio (R$)"].sum() if not df.empty else 0.0
-lucro_liquido = total_faturamento - total_combustivel - total_pedagio
+total_km_global = df["KM Rodado"].sum() if not df.empty else 0.0
 
-# Painel de Destaque
+total_desgaste_manutencao = total_km_global * TAXA_DESGASTE_KM
+lucro_liquido_real = total_faturamento - total_combustivel - total_pedagio - total_desgaste_manutencao
+
 st.markdown(f"""
 <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px;">
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -186,7 +188,7 @@ st.markdown(f"""
     </div>
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
         <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real ({mes_selecionado})</h3>
-        <h1 style="margin: 10px 0 0 0; font-size: 3.5rem; color: #2196f3;">R$ {lucro_liquido:,.2f}</h1>
+        <h1 style="margin: 10px 0 0 0; font-size: 3.5rem; color: #2196f3;">R$ {lucro_liquido_real:,.2f}</h1>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -196,31 +198,34 @@ aba_dashboard, aba_historico = st.tabs(["📊 Dashboard Analítico", "🗄️ Hi
 if not df.empty:
     df["Litros_Consumidos"] = df["KM Rodado"] / df["Consumo (km/L)"]
     df["Horas_Duracao"] = df.apply(lambda row: calcular_horas_decimais(row["Hora Início"], row["Hora Término"]), axis=1)
-    df["Lucro_Linha"] = df["Faturamento Bruto (R$)"] - df["Combustível (R$)"] - df["Pedágio (R$)"]
+    
+    # CÁLCULOS POR ROTA
+    df["Custo_Desgaste"] = df["KM Rodado"] * TAXA_DESGASTE_KM
+    df["Custo_Total"] = df["Combustível (R$)"] + df["Pedágio (R$)"] + df["Custo_Desgaste"]
+    df["Lucro_Linha"] = df["Faturamento Bruto (R$)"] - df["Custo_Total"]
     
     total_pacotes = df["Pacotes"].sum()
-    total_km = df["KM Rodado"].sum()
     total_litros = df["Litros_Consumidos"].sum()
     total_horas = df["Horas_Duracao"].sum()
     
     paradas_hora = df["Paradas"].sum() / total_horas if total_horas > 0 else 0
     pacotes_hora = total_pacotes / total_horas if total_horas > 0 else 0
-    custo_km = (total_combustivel + total_pedagio) / total_km if total_km > 0 else 0
+    custo_km = (total_combustivel + total_pedagio + total_desgaste_manutencao) / total_km_global if total_km_global > 0 else 0
     preco_litro = total_combustivel / total_litros if total_litros > 0 else 0
-    lucro_por_km = lucro_liquido / total_km if total_km > 0 else 0
+    lucro_por_km = lucro_liquido_real / total_km_global if total_km_global > 0 else 0
 
     with aba_dashboard:
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("📦 Desempenho", f"{pacotes_hora:.1f} pac/h", f"{total_pacotes} Pac. no Mês")
-        col2.metric("⛽ Custo de Rodagem", f"R$ {custo_km:.2f} / KM", f"{total_km:,.1f} KM Totais")
+        col2.metric("⛽ Custo de Rodagem (Com Desgaste)", f"R$ {custo_km:.2f} / KM", f"{total_km_global:,.1f} KM Totais")
         col3.metric("💧 Combustível", f"{total_litros:.1f} L consumidos", f"R$ {preco_litro:.2f} / L")
-        col4.metric("🏆 Lucro Médio", f"R$ {lucro_por_km:.2f} / KM", "Eficiência Geral")
+        col4.metric("🏆 Lucro Médio Real", f"R$ {lucro_por_km:.2f} / KM", "Pós-manutenção")
         
         st.markdown("---")
         col_graf1, col_graf2 = st.columns(2)
         
         with col_graf1:
-            st.markdown("#### 📈 Evolução Financeira")
+            st.markdown("#### 📈 Evolução Financeira Real")
             df_grafico = df.groupby("Data")[["Faturamento Bruto (R$)", "Lucro_Linha"]].sum().reset_index()
             st.line_chart(data=df_grafico, x="Data", y=["Faturamento Bruto (R$)", "Lucro_Linha"], use_container_width=True)
 
@@ -234,13 +239,11 @@ if not df.empty:
             else:
                 st.info("Lance a sua primeira rota com o nome da cidade para gerar este gráfico.")
                 
-        # --- NOVO: BOTÃO DE EXPORTAÇÃO ---
         st.markdown("---")
         st.markdown("#### 📥 Exportar Resumo Mensal")
         st.write("Baixe a planilha com os dados filtrados deste mês para montar as suas artes e relatórios.")
         
-        # Limpa colunas de controle interno antes de exportar
-        df_export = df.drop(columns=["Mes_Ano", "Litros_Consumidos", "Horas_Duracao", "Lucro_Linha"], errors='ignore')
+        df_export = df.drop(columns=["Mes_Ano", "Litros_Consumidos", "Horas_Duracao", "Lucro_Linha", "Custo_Total", "Custo_Desgaste"], errors='ignore')
         csv = df_export.to_csv(index=False).encode('utf-8')
         
         nome_arquivo = f"Fechamento_{mes_selecionado.replace('/', '_')}.csv" if mes_selecionado != "Todos" else "Historico_Completo.csv"
@@ -268,7 +271,7 @@ if not df.empty:
                     f"**ID {row['ID']} | {row['Data']}** — **{row['Plataforma']}** {cidade_exibicao} | "
                     f"📦 {int(row['Pacotes'])} pac. | 🛑 {int(row['Paradas'])} paradas (**{p_hora:.1f}/h**) | "
                     f"⏱️ {tempo_str} | 🛣️ {row['KM Rodado']} KM a {int(row['Consumo (km/L)'])}km/L<br>"
-                    f"💸 Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | 🏆 Lucro/KM: **R$ {lucro_rota_km:.2f}**",
+                    f"💸 Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | 🛠️ Desgaste: **R$ {row['Custo_Desgaste']:.2f}** | 🏆 Lucro/KM Real: **R$ {lucro_rota_km:.2f}**",
                     unsafe_allow_html=True
                 )
                 
