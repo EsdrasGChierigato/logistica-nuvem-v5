@@ -3,13 +3,15 @@ import pandas as pd
 from datetime import datetime, time
 import hashlib
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="EGC Logística App", layout="wide", page_icon="🚚")
 
-# --- CONEXÃO COM O BANCO BLINDADA ---
+# --- CONEXÃO COM O BANCO BLINDADA (NULLPOOL) ---
+# O NullPool impede que o Python tente reutilizar conexões mortas pelo Supabase.
 DB_URL = "postgresql+psycopg2://postgres.vtyfmfpijfjkxkrcvnoi:151060Violao16!@aws-1-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require"
-engine = create_engine(DB_URL, pool_pre_ping=True, connect_args={'connect_timeout': 15})
+engine = create_engine(DB_URL, poolclass=NullPool, connect_args={'connect_timeout': 15})
 TAXA_DESGASTE_KM = 0.35
 
 # --- FUNÇÕES DE SEGURANÇA E AUTENTICAÇÃO ---
@@ -130,17 +132,33 @@ def aplicativo_principal():
 
     if st.session_state.modo_edicao:
         st.sidebar.header("✏️ Editar Rota")
-        linha_editar = df_full[df_full["ID"] == st.session_state.id_edicao].iloc[0]
-        data_padrao = datetime.strptime(linha_editar["Data"], "%Y-%m-%d")
-        plat_idx = ["Mercado Livre", "Shopee", "Outra"].index(linha_editar["Plataforma"]) if linha_editar["Plataforma"] in ["Mercado Livre", "Shopee", "Outra"] else 0
-        cidade_padrao = str(linha_editar["Cidade"]) if str(linha_editar["Cidade"]) != "None" else ""
-        comb_idx = 0 if linha_editar["Tipo Combustível"] == "Gasolina" else 1
-        cons_idx = [7, 8, 9, 10, 11, 12].index(int(linha_editar["Consumo (km/L)"])) if int(linha_editar["Consumo (km/L)"]) in [7, 8, 9, 10, 11, 12] else 3
-        ini_time = datetime.strptime(linha_editar["Hora Início"], "%H:%M:%S").time() if pd.notna(linha_editar["Hora Início"]) else time(6,0)
-        fim_time = datetime.strptime(linha_editar["Hora Término"], "%H:%M:%S").time() if pd.notna(linha_editar["Hora Término"]) else time(14,0)
-        
-        km_edit, cons_edit, comb_total_edit = float(linha_editar["KM Rodado"]), int(linha_editar["Consumo (km/L)"]), float(linha_editar["Combustível (R$)"])
-        preco_litro_padrao = comb_total_edit / (km_edit / cons_edit) if (km_edit > 0 and cons_edit > 0) else 5.80
+        try:
+            # Filtro blindado para garantir que não puxe dados de ID inexistente
+            linha_editar = df_full[df_full["ID"] == int(st.session_state.id_edicao)].iloc[0]
+            data_padrao = datetime.strptime(linha_editar["Data"], "%Y-%m-%d")
+            plat_idx = ["Mercado Livre", "Shopee", "Outra"].index(linha_editar["Plataforma"]) if linha_editar["Plataforma"] in ["Mercado Livre", "Shopee", "Outra"] else 0
+            cidade_padrao = str(linha_editar["Cidade"]) if str(linha_editar["Cidade"]) != "None" else ""
+            comb_idx = 0 if linha_editar["Tipo Combustível"] == "Gasolina" else 1
+            
+            # Tratamento de segurança para conversão de números
+            try: cons_idx = [7, 8, 9, 10, 11, 12].index(int(linha_editar["Consumo (km/L)"]))
+            except: cons_idx = 3
+            
+            # Tratamento de segurança para conversão de tempo
+            try: ini_time = datetime.strptime(str(linha_editar["Hora Início"]), "%H:%M:%S").time()
+            except: ini_time = time(6,0)
+            
+            try: fim_time = datetime.strptime(str(linha_editar["Hora Término"]), "%H:%M:%S").time()
+            except: fim_time = time(14,0)
+            
+            km_edit = float(linha_editar["KM Rodado"]) if pd.notna(linha_editar["KM Rodado"]) else 0.0
+            cons_edit = int(linha_editar["Consumo (km/L)"]) if pd.notna(linha_editar["Consumo (km/L)"]) else 10
+            comb_total_edit = float(linha_editar["Combustível (R$)"]) if pd.notna(linha_editar["Combustível (R$)"]) else 0.0
+            preco_litro_padrao = comb_total_edit / (km_edit / cons_edit) if (km_edit > 0 and cons_edit > 0) else 5.80
+        except Exception as e:
+            st.sidebar.error("Erro interno ao ler a linha. Cancele e tente novamente.")
+            st.session_state.modo_edicao = False
+            st.rerun()
     else:
         st.sidebar.header("🗺️ Lançar Nova Rota")
         data_padrao, plat_idx, cidade_padrao, comb_idx, cons_idx, ini_time, fim_time, preco_litro_padrao = datetime.now(), 0, "", 0, 3, time(6, 0), time(14, 0), 5.80
@@ -199,7 +217,7 @@ def aplicativo_principal():
             pd.DataFrame([nova_linha_bd]).to_sql('entregas_logistica', engine, if_exists='append', index=False)
         st.rerun()
 
-    if st.session_state.modo_edicao and st.sidebar.button("❌ Cancelar", use_container_width=True):
+    if st.session_state.modo_edicao and st.sidebar.button("❌ Cancelar Edição", use_container_width=True):
         st.session_state.modo_edicao = False; st.session_state.id_edicao = None; st.rerun()
 
     # --- FILTRO MENSAL ---
