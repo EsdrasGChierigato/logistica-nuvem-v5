@@ -1,374 +1,275 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, time
+import hashlib
 from sqlalchemy import create_engine, text
 
-# 1. Banco de Dados em Nuvem (Supabase)
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="EGC Logística App", layout="wide", page_icon="🚚")
+
+# --- CONEXÃO COM O BANCO ---
 DB_URL = "postgresql+psycopg2://postgres.vtyfmfpijfjkxkrcvnoi:151060Violao16!@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
 engine = create_engine(DB_URL)
+TAXA_DESGASTE_KM = 0.35
 
-TAXA_DESGASTE_KM = 0.35  # Taxa de manutenção/depreciação por KM rodado
+# --- FUNÇÕES DE SEGURANÇA E AUTENTICAÇÃO ---
+def gerar_hash(senha):
+    return hashlib.sha256(senha.encode()).hexdigest()
 
-def carregar_dados():
+def verificar_login(email, senha):
+    senha_hash = gerar_hash(senha)
+    query = text("SELECT id, nome FROM usuarios_logistica WHERE email = :email AND senha_hash = :senha_hash")
+    with engine.connect() as conn:
+        resultado = conn.execute(query, {"email": email, "senha_hash": senha_hash}).fetchone()
+        return resultado
+
+def cadastrar_usuario(nome, email, senha):
+    senha_hash = gerar_hash(senha)
+    query = text("INSERT INTO usuarios_logistica (nome, email, senha_hash) VALUES (:nome, :email, :senha_hash)")
     try:
-        df_bd = pd.read_sql("SELECT * FROM entregas_logistica ORDER BY data DESC", engine)
-        
-        df_bd = df_bd.rename(columns={
-            "id": "ID", "data": "Data", "plataforma": "Plataforma", "cidade": "Cidade",
-            "pacotes": "Pacotes", "paradas": "Paradas", "faturamento_bruto": "Faturamento Bruto (R$)",
-            "pedagio": "Pedágio (R$)", "combustivel": "Combustível (R$)",
-            "tipo_combustivel": "Tipo Combustível", "consumo_kml": "Consumo (km/L)",
-            "km_rodado": "KM Rodado", "hora_inicio": "Hora Início", "hora_termino": "Hora Término"
-        })
-        
-        if "Cidade" not in df_bd.columns:
-            df_bd["Cidade"] = "Não informada"
-
-        df_bd['Data'] = df_bd['Data'].astype(str)
-        df_bd['Hora Início'] = df_bd['Hora Início'].astype(str)
-        df_bd['Hora Término'] = df_bd['Hora Término'].astype(str)
-        return df_bd
-        
-    except Exception as e:
-        st.error(f"⚠️ Erro de Conexão: {e}")
-        return pd.DataFrame(columns=["ID", "Data", "Plataforma", "Cidade", "Pacotes", "Paradas", "Faturamento Bruto (R$)", "Pedágio (R$)", "Combustível (R$)", "Tipo Combustível", "Consumo (km/L)", "KM Rodado", "Hora Início", "Hora Término"])
-
-def calcular_horas_decimais(h_ini, h_fim):
-    fmt = "%H:%M:%S"
-    try:
-        t_ini = datetime.strptime(str(h_ini), fmt)
-        t_fim = datetime.strptime(str(h_fim), fmt)
-        diferenca = t_fim - t_ini
-        segundos = diferenca.total_seconds()
-        if segundos < 0: 
-            segundos += 24 * 3600
-        return segundos / 3600
-    except:
-        return 0.0
-
-st.set_page_config(page_title="EGC Logística", layout="wide", page_icon="🚚")
-st.title("🚚 EGC Logística")
-st.markdown("---")
-
-df_full = carregar_dados()
-
-if "modo_edicao" not in st.session_state:
-    st.session_state.modo_edicao = False
-    st.session_state.id_edicao = None
-
-if st.session_state.modo_edicao:
-    st.sidebar.header("✏️ Editar Rota")
-    st.sidebar.info(f"ID do registro: {st.session_state.id_edicao}")
-    linha_editar = df_full[df_full["ID"] == st.session_state.id_edicao].iloc[0]
-    
-    data_padrao = datetime.strptime(linha_editar["Data"], "%Y-%m-%d")
-    plat_idx = ["Mercado Livre", "Shopee", "Outra"].index(linha_editar["Plataforma"]) if linha_editar["Plataforma"] in ["Mercado Livre", "Shopee", "Outra"] else 0
-    cidade_padrao = str(linha_editar["Cidade"]) if pd.notna(linha_editar["Cidade"]) and str(linha_editar["Cidade"]) != "None" else ""
-    comb_idx = ["Gasolina", "Etanol"].index(linha_editar["Tipo Combustível"]) if linha_editar["Tipo Combustível"] in ["Gasolina", "Etanol"] else 0
-    cons_idx = [7, 8, 9, 10, 11, 12].index(int(linha_editar["Consumo (km/L)"])) if int(linha_editar["Consumo (km/L)"]) in [7, 8, 9, 10, 11, 12] else 3
-    
-    ini_time = datetime.strptime(linha_editar["Hora Início"], "%H:%M:%S").time()
-    fim_time = datetime.strptime(linha_editar["Hora Término"], "%H:%M:%S").time()
-    
-    km_edit = float(linha_editar["KM Rodado"])
-    cons_edit = int(linha_editar["Consumo (km/L)"])
-    comb_total_edit = float(linha_editar["Combustível (R$)"])
-    if km_edit > 0 and cons_edit > 0:
-        litros_edit = km_edit / cons_edit
-        preco_litro_padrao = comb_total_edit / litros_edit if litros_edit > 0 else 5.80
-    else:
-        preco_litro_padrao = 5.80
-else:
-    st.sidebar.header("🗺️ Dados da Rota")
-    data_padrao = datetime.now()
-    plat_idx = 0
-    cidade_padrao = ""
-    comb_idx = 0
-    cons_idx = 3 
-    ini_time = time(6, 0)
-    fim_time = time(14, 0)
-    preco_litro_padrao = 5.80
-
-with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
-    data_entrega = st.date_input("Data da Rota", data_padrao)
-    plataforma = st.selectbox("Plataforma", ["Mercado Livre", "Shopee", "Outra"], index=plat_idx)
-    cidade_rota = st.text_input("📍 Cidade", value=cidade_padrao, placeholder="Ex: Valparaíso, Araçatuba...")
-    
-    st.markdown("**📦 Operacional**")
-    col_A, col_B = st.columns(2)
-    qtd_pacotes = col_A.number_input("Pacotes", min_value=0, step=1, value=int(linha_editar["Pacotes"]) if st.session_state.modo_edicao else 0)
-    qtd_paradas = col_B.number_input("Paradas", min_value=0, step=1, value=int(linha_editar["Paradas"]) if st.session_state.modo_edicao else 0)
-    
-    st.markdown("**💰 Financeiro**")
-    col_C, col_D = st.columns(2)
-    faturamento = col_C.number_input("Faturamento (R$)", min_value=0.0, format="%.2f", value=float(linha_editar["Faturamento Bruto (R$)"]) if st.session_state.modo_edicao else 0.0)
-    pedagio = col_D.number_input("Pedágio (R$)", min_value=0.0, format="%.2f", value=float(linha_editar["Pedágio (R$)"]) if st.session_state.modo_edicao else 0.0)
-    
-    st.markdown("**⛽ Veículo e Rodagem**")
-    col_E, col_F = st.columns(2)
-    preco_litro_input = col_E.number_input("Preço do Litro (R$)", min_value=0.0, format="%.2f", value=float(preco_litro_padrao))
-    tipo_comb = col_F.selectbox("Combustível", ["Gasolina", "Etanol"], index=comb_idx)
-    
-    col_km, col_cons = st.columns(2)
-    km_rodado = col_km.number_input("KM Rodado", min_value=0.0, format="%.2f", value=float(linha_editar["KM Rodado"]) if st.session_state.modo_edicao else 0.0)
-    consumo_carro = col_cons.selectbox("Consumo (km/L)", [7, 8, 9, 10, 11, 12], index=cons_idx)
-    
-    st.markdown("**⏱️ Horários**")
-    col_G, col_H = st.columns(2)
-    h_inicio = col_G.time_input("Início", ini_time)
-    h_termino = col_H.time_input("Término", fim_time)
-    
-    label_botao = "💾 Salvar Alterações" if st.session_state.modo_edicao else "🚀 Salvar Rota"
-    botao_salvar = st.form_submit_button(label=label_botao, use_container_width=True)
-
-if botao_salvar:
-    litros_gastos = km_rodado / consumo_carro if consumo_carro > 0 else 0
-    custo_combustivel_total = litros_gastos * preco_litro_input
-
-    nova_linha_bd = {
-        "data": data_entrega.strftime("%Y-%m-%d"),
-        "plataforma": plataforma,
-        "cidade": cidade_rota.strip() if cidade_rota else "Não informada",
-        "pacotes": qtd_pacotes,
-        "paradas": qtd_paradas,
-        "faturamento_bruto": faturamento,
-        "pedagio": pedagio,
-        "combustivel": custo_combustivel_total, 
-        "tipo_combustivel": tipo_comb,
-        "consumo_kml": consumo_carro,
-        "km_rodado": km_rodado,
-        "hora_inicio": h_inicio.strftime("%H:%M:%S"),
-        "hora_termino": h_termino.strftime("%H:%M:%S")
-    }
-    
-    if st.session_state.modo_edicao:
-        query_update = text("""
-            UPDATE entregas_logistica 
-            SET data=:data, plataforma=:plataforma, cidade=:cidade, pacotes=:pacotes, paradas=:paradas, 
-                faturamento_bruto=:faturamento_bruto, pedagio=:pedagio, combustivel=:combustivel, 
-                tipo_combustivel=:tipo_combustivel, consumo_kml=:consumo_kml, km_rodado=:km_rodado, 
-                hora_inicio=:hora_inicio, hora_termino=:hora_termino 
-            WHERE id=:id
-        """)
-        nova_linha_bd["id"] = int(st.session_state.id_edicao)
-        
         with engine.begin() as conn:
-            conn.execute(query_update, nova_linha_bd)
-            
-        st.session_state.modo_edicao = False
-        st.session_state.id_edicao = None
-    else:
-        pd.DataFrame([nova_linha_bd]).to_sql('entregas_logistica', engine, if_exists='append', index=False)
-        
-    st.rerun()
+            conn.execute(query, {"nome": nome, "email": email, "senha_hash": senha_hash})
+        return True
+    except Exception as e:
+        return False
 
-if st.session_state.modo_edicao:
-    if st.sidebar.button("❌ Cancelar Edição", use_container_width=True):
+# --- GERENCIAMENTO DE ESTADO (SESSION) ---
+if "logado" not in st.session_state:
+    st.session_state.logado = False
+    st.session_state.usuario_id = None
+    st.session_state.usuario_nome = ""
+
+# --- TELAS DE ACESSO ---
+def tela_login():
+    st.markdown("<h1 style='text-align: center; color: #2196f3;'>🚚 EGC Logística</h1>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center; color: gray;'>Gestão de Last Mile Multi-Plataforma</h4>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        aba_login, aba_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
+        
+        with aba_login:
+            with st.form("form_login"):
+                email_login = st.text_input("E-mail")
+                senha_login = st.text_input("Senha", type="password")
+                btn_entrar = st.form_submit_button("Acessar Painel", use_container_width=True)
+                
+                if btn_entrar:
+                    usuario = verificar_login(email_login, senha_login)
+                    if usuario:
+                        st.session_state.logado = True
+                        st.session_state.usuario_id = usuario[0]
+                        st.session_state.usuario_nome = usuario[1]
+                        st.rerun()
+                    else:
+                        st.error("Credenciais inválidas. Tente novamente.")
+                        
+        with aba_cadastro:
+            with st.form("form_cadastro"):
+                nome_cad = st.text_input("Nome Completo")
+                email_cad = st.text_input("E-mail")
+                senha_cad = st.text_input("Senha", type="password")
+                btn_cadastrar = st.form_submit_button("Cadastrar Nova Conta", use_container_width=True)
+                
+                if btn_cadastrar:
+                    if nome_cad and email_cad and senha_cad:
+                        sucesso = cadastrar_usuario(nome_cad, email_cad, senha_cad)
+                        if sucesso:
+                            st.success("Conta criada! Volte para a aba 'Entrar' para acessar.")
+                        else:
+                            st.error("Erro: Este e-mail já está em uso ou houve falha no banco.")
+                    else:
+                        st.warning("Preencha todos os campos obrigatórios.")
+
+# --- NÚCLEO DO SISTEMA (ISOLADO POR USUÁRIO) ---
+def aplicativo_principal():
+    st.sidebar.markdown(f"👤 **Piloto:** {st.session_state.usuario_nome}")
+    if st.sidebar.button("🚪 Sair", use_container_width=True):
+        st.session_state.logado = False
+        st.session_state.usuario_id = None
+        st.session_state.usuario_nome = ""
+        st.rerun()
+        
+    st.title("🚚 Painel Operacional")
+    st.markdown("---")
+
+    # A MAGIA ACONTECE AQUI: Puxa SÓ os dados do usuario_id logado
+    def carregar_dados_usuario(uid):
+        try:
+            query = text("SELECT * FROM entregas_logistica WHERE usuario_id = :uid ORDER BY data DESC")
+            df_bd = pd.read_sql(query, engine, params={"uid": uid})
+            
+            df_bd = df_bd.rename(columns={
+                "id": "ID", "data": "Data", "plataforma": "Plataforma", "cidade": "Cidade",
+                "pacotes": "Pacotes", "paradas": "Paradas", "faturamento_bruto": "Faturamento Bruto (R$)",
+                "pedagio": "Pedágio (R$)", "combustivel": "Combustível (R$)",
+                "tipo_combustivel": "Tipo Combustível", "consumo_kml": "Consumo (km/L)",
+                "km_rodado": "KM Rodado", "hora_inicio": "Hora Início", "hora_termino": "Hora Término"
+            })
+            if "Cidade" not in df_bd.columns: df_bd["Cidade"] = "Não informada"
+            df_bd['Data'] = df_bd['Data'].astype(str)
+            return df_bd
+        except Exception as e:
+            st.error(f"Erro de Conexão: {e}")
+            return pd.DataFrame()
+
+    def calcular_horas_decimais(h_ini, h_fim):
+        fmt = "%H:%M:%S"
+        try:
+            diferenca = datetime.strptime(str(h_fim), fmt) - datetime.strptime(str(h_ini), fmt)
+            segundos = diferenca.total_seconds()
+            return (segundos + 24 * 3600 if segundos < 0 else segundos) / 3600
+        except: return 0.0
+
+    df_full = carregar_dados_usuario(st.session_state.usuario_id)
+
+    if "modo_edicao" not in st.session_state:
         st.session_state.modo_edicao = False
         st.session_state.id_edicao = None
+
+    if st.session_state.modo_edicao:
+        st.sidebar.header("✏️ Editar Rota")
+        linha_editar = df_full[df_full["ID"] == st.session_state.id_edicao].iloc[0]
+        data_padrao = datetime.strptime(linha_editar["Data"], "%Y-%m-%d")
+        plat_idx = ["Mercado Livre", "Shopee", "Outra"].index(linha_editar["Plataforma"]) if linha_editar["Plataforma"] in ["Mercado Livre", "Shopee", "Outra"] else 0
+        cidade_padrao = str(linha_editar["Cidade"]) if str(linha_editar["Cidade"]) != "None" else ""
+        comb_idx = 0 if linha_editar["Tipo Combustível"] == "Gasolina" else 1
+        cons_idx = [7, 8, 9, 10, 11, 12].index(int(linha_editar["Consumo (km/L)"])) if int(linha_editar["Consumo (km/L)"]) in [7, 8, 9, 10, 11, 12] else 3
+        ini_time = datetime.strptime(linha_editar["Hora Início"], "%H:%M:%S").time() if pd.notna(linha_editar["Hora Início"]) else time(6,0)
+        fim_time = datetime.strptime(linha_editar["Hora Término"], "%H:%M:%S").time() if pd.notna(linha_editar["Hora Término"]) else time(14,0)
+        
+        km_edit, cons_edit, comb_total_edit = float(linha_editar["KM Rodado"]), int(linha_editar["Consumo (km/L)"]), float(linha_editar["Combustível (R$)"])
+        preco_litro_padrao = comb_total_edit / (km_edit / cons_edit) if (km_edit > 0 and cons_edit > 0) else 5.80
+    else:
+        st.sidebar.header("🗺️ Lançar Nova Rota")
+        data_padrao, plat_idx, cidade_padrao, comb_idx, cons_idx, ini_time, fim_time, preco_litro_padrao = datetime.now(), 0, "", 0, 3, time(6, 0), time(14, 0), 5.80
+
+    with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
+        data_entrega = st.date_input("Data da Rota", data_padrao)
+        plataforma = st.selectbox("Plataforma", ["Mercado Livre", "Shopee", "Outra"], index=plat_idx)
+        cidade_rota = st.text_input("📍 Cidade", value=cidade_padrao)
+        
+        c1, c2 = st.columns(2)
+        qtd_pacotes = c1.number_input("Pacotes", min_value=0, step=1, value=int(linha_editar["Pacotes"]) if st.session_state.modo_edicao else 0)
+        qtd_paradas = c2.number_input("Paradas", min_value=0, step=1, value=int(linha_editar["Paradas"]) if st.session_state.modo_edicao else 0)
+        
+        c3, c4 = st.columns(2)
+        faturamento = c3.number_input("Faturamento (R$)", min_value=0.0, format="%.2f", value=float(linha_editar["Faturamento Bruto (R$)"]) if st.session_state.modo_edicao else 0.0)
+        pedagio = c4.number_input("Pedágio (R$)", min_value=0.0, format="%.2f", value=float(linha_editar["Pedágio (R$)"]) if st.session_state.modo_edicao else 0.0)
+        
+        c5, c6 = st.columns(2)
+        preco_litro_input = c5.number_input("Preço Litro (R$)", min_value=0.0, format="%.2f", value=float(preco_litro_padrao))
+        tipo_comb = c6.selectbox("Combustível", ["Gasolina", "Etanol"], index=comb_idx)
+        
+        c7, c8 = st.columns(2)
+        km_rodado = c7.number_input("KM Rodado", min_value=0.0, format="%.2f", value=float(linha_editar["KM Rodado"]) if st.session_state.modo_edicao else 0.0)
+        consumo_carro = c8.selectbox("Consumo (km/L)", [7, 8, 9, 10, 11, 12], index=cons_idx)
+        
+        c9, c10 = st.columns(2)
+        h_inicio = c9.time_input("Início", ini_time)
+        h_termino = c10.time_input("Término", fim_time)
+        
+        btn_salvar = st.form_submit_button("💾 Salvar Alterações" if st.session_state.modo_edicao else "🚀 Gravar Rota", use_container_width=True)
+
+    if btn_salvar:
+        custo_combustivel_total = (km_rodado / consumo_carro) * preco_litro_input if consumo_carro > 0 else 0
+        nova_linha_bd = {
+            "usuario_id": st.session_state.usuario_id, # Injeta o dono da rota
+            "data": data_entrega.strftime("%Y-%m-%d"), "plataforma": plataforma, "cidade": cidade_rota.strip() if cidade_rota else "Não informada",
+            "pacotes": qtd_pacotes, "paradas": qtd_paradas, "faturamento_bruto": faturamento, "pedagio": pedagio,
+            "combustivel": custo_combustivel_total, "tipo_combustivel": tipo_comb, "consumo_kml": consumo_carro,
+            "km_rodado": km_rodado, "hora_inicio": h_inicio.strftime("%H:%M:%S"), "hora_termino": h_termino.strftime("%H:%M:%S")
+        }
+        
+        if st.session_state.modo_edicao:
+            query_update = text("""
+                UPDATE entregas_logistica 
+                SET data=:data, plataforma=:plataforma, cidade=:cidade, pacotes=:pacotes, paradas=:paradas, 
+                    faturamento_bruto=:faturamento_bruto, pedagio=:pedagio, combustivel=:combustivel, 
+                    tipo_combustivel=:tipo_combustivel, consumo_kml=:consumo_kml, km_rodado=:km_rodado, 
+                    hora_inicio=:hora_inicio, hora_termino=:hora_termino 
+                WHERE id=:id AND usuario_id=:usuario_id
+            """) # Segurança Extra: Só edita se a rota pertencer ao usuário logado
+            nova_linha_bd["id"] = int(st.session_state.id_edicao)
+            with engine.begin() as conn: conn.execute(query_update, nova_linha_bd)
+            st.session_state.modo_edicao = False
+            st.session_state.id_edicao = None
+        else:
+            pd.DataFrame([nova_linha_bd]).to_sql('entregas_logistica', engine, if_exists='append', index=False)
         st.rerun()
 
-st.sidebar.markdown("---")
-st.sidebar.header("📅 Fechamento Mensal")
+    if st.session_state.modo_edicao and st.sidebar.button("❌ Cancelar", use_container_width=True):
+        st.session_state.modo_edicao = False; st.session_state.id_edicao = None; st.rerun()
 
-mes_atual_sistema = datetime.now().strftime('%m/%Y')
-
-if not df_full.empty:
-    df_full['Mes_Ano'] = pd.to_datetime(df_full['Data']).dt.strftime('%m/%Y')
-    meses_unicos = list(df_full['Mes_Ano'].unique())
+    # --- FILTRO MENSAL (Lógica de Isolamento Mantida) ---
+    st.sidebar.markdown("---")
+    mes_atual_sistema = datetime.now().strftime('%m/%Y')
     
-    if mes_atual_sistema not in meses_unicos:
-        meses_unicos.insert(0, mes_atual_sistema)
-        
-    meses_disponiveis = [mes_atual_sistema, "Todos"] + [m for m in meses_unicos if m != mes_atual_sistema]
-    mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", meses_disponiveis)
-    
-    if mes_selecionado != "Todos":
-        df = df_full[df_full['Mes_Ano'] == mes_selecionado].copy()
+    if not df_full.empty:
+        df_full['Mes_Ano'] = pd.to_datetime(df_full['Data']).dt.strftime('%m/%Y')
+        meses_unicos = list(df_full['Mes_Ano'].unique())
+        if mes_atual_sistema not in meses_unicos: meses_unicos.insert(0, mes_atual_sistema)
+        mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", [mes_atual_sistema, "Todos"] + [m for m in meses_unicos if m != mes_atual_sistema])
+        df = df_full[df_full['Mes_Ano'] == mes_selecionado].copy() if mes_selecionado != "Todos" else df_full.copy()
     else:
-        df = df_full.copy()
-else:
-    df = df_full.copy()
-    meses_disponiveis = [mes_atual_sistema, "Todos"]
-    mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", meses_disponiveis)
+        df = pd.DataFrame()
+        mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", [mes_atual_sistema, "Todos"])
 
-total_faturamento = df["Faturamento Bruto (R$)"].sum() if not df.empty else 0.0
-total_combustivel = df["Combustível (R$)"].sum() if not df.empty else 0.0
-total_pedagio = df["Pedágio (R$)"].sum() if not df.empty else 0.0
-total_km_global = df["KM Rodado"].sum() if not df.empty else 0.0
+    # --- MÉTRICAS GLOBAIS DA TELA ---
+    t_fat = df["Faturamento Bruto (R$)"].sum() if not df.empty else 0.0
+    t_comb = df["Combustível (R$)"].sum() if not df.empty else 0.0
+    t_ped = df["Pedágio (R$)"].sum() if not df.empty else 0.0
+    t_km = df["KM Rodado"].sum() if not df.empty else 0.0
+    t_gastos = t_comb + t_ped + (t_km * TAXA_DESGASTE_KM)
+    t_lucro = t_fat - t_gastos
 
-total_desgaste_manutencao = total_km_global * TAXA_DESGASTE_KM
-total_gastos = total_combustivel + total_pedagio + total_desgaste_manutencao
-lucro_liquido_real = total_faturamento - total_gastos
-
-st.markdown(f"""
-<div style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px;">
-    <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #a5d6a7;">💰 Faturamento Bruto ({mes_selecionado})</h3>
-        <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #4caf50;">R$ {total_faturamento:,.2f}</h1>
+    st.markdown(f"""
+    <div style="display: flex; gap: 20px; margin-bottom: 25px;">
+        <div style="flex: 1; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #4caf50; text-align: center;">
+            <h4 style="margin:0; color:#a5d6a7;">Faturamento Bruto</h4>
+            <h2 style="margin:5px 0 0 0; color:#4caf50;">R$ {t_fat:,.2f}</h2>
+        </div>
+        <div style="flex: 1; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #f44336; text-align: center;">
+            <h4 style="margin:0; color:#ef9a9a;">Gastos Operacionais</h4>
+            <h2 style="margin:5px 0 0 0; color:#f44336;">R$ {t_gastos:,.2f}</h2>
+        </div>
+        <div style="flex: 1; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #2196f3; text-align: center;">
+            <h4 style="margin:0; color:#90caf9;">Lucro Líquido</h4>
+            <h2 style="margin:5px 0 0 0; color:#2196f3;">R$ {t_lucro:,.2f}</h2>
+        </div>
     </div>
-    <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #f44336; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #ef9a9a;">🔻 Gastos Operacionais ({mes_selecionado})</h3>
-        <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #f44336;">R$ {total_gastos:,.2f}</h1>
-    </div>
-    <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real ({mes_selecionado})</h3>
-        <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #2196f3;">R$ {lucro_liquido_real:,.2f}</h1>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-aba_dashboard, aba_historico = st.tabs(["📊 Dashboard Analítico", "🗄️ Histórico de Rotas"])
+    aba_dash, aba_hist = st.tabs(["📊 Dashboard Analítico", "🗄️ Histórico de Rotas"])
 
-if not df.empty:
-    df["Litros_Consumidos"] = df["KM Rodado"] / df["Consumo (km/L)"]
-    df["Horas_Duracao"] = df.apply(lambda row: calcular_horas_decimais(row["Hora Início"], row["Hora Término"]), axis=1)
-    
-    # CÁLCULOS POR ROTA
-    df["Custo_Desgaste"] = df["KM Rodado"] * TAXA_DESGASTE_KM
-    df["Custo_Total"] = df["Combustível (R$)"] + df["Pedágio (R$)"] + df["Custo_Desgaste"]
-    df["Lucro_Linha"] = df["Faturamento Bruto (R$)"] - df["Custo_Total"]
-    
-    total_pacotes = df["Pacotes"].sum()
-    total_litros = df["Litros_Consumidos"].sum()
-    total_horas = df["Horas_Duracao"].sum()
-    
-    paradas_hora = df["Paradas"].sum() / total_horas if total_horas > 0 else 0
-    pacotes_hora = total_pacotes / total_horas if total_horas > 0 else 0
-    custo_km = total_gastos / total_km_global if total_km_global > 0 else 0
-    
-    preco_litro_medio = total_combustivel / total_litros if total_litros > 0 else 0
-    lucro_por_km = lucro_liquido_real / total_km_global if total_km_global > 0 else 0
-
-    with aba_dashboard:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("📦 Desempenho", f"{pacotes_hora:.1f} pac/h", f"{total_pacotes} Pac. no Mês")
-        col2.metric("⛽ Custo de Rodagem", f"R$ {custo_km:.2f} / KM", f"{total_km_global:,.1f} KM Totais")
-        col3.metric("💧 Preço Médio Combust.", f"R$ {preco_litro_medio:.2f} / L", f"{total_litros:.1f} L consumidos")
-        col4.metric("🏆 Lucro Médio Real", f"R$ {lucro_por_km:.2f} / KM", "Pós-manutenção")
+    if not df.empty:
+        df["Custo_Total"] = df["Combustível (R$)"] + df["Pedágio (R$)"] + (df["KM Rodado"] * TAXA_DESGASTE_KM)
+        df["Lucro_Linha"] = df["Faturamento Bruto (R$)"] - df["Custo_Total"]
         
-        st.markdown("---")
-        col_graf1, col_graf2 = st.columns(2)
-        
-        with col_graf1:
-            st.markdown("#### 📈 Evolução Financeira Real")
-            df_grafico = df.groupby("Data")[["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"]].sum().reset_index()
-            st.line_chart(data=df_grafico, x="Data", y=["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"], color=["#4caf50", "#f44336", "#2196f3"], use_container_width=True)
-
-        with col_graf2:
-            st.markdown("#### 📍 Entregas por Cidade")
-            df_cidades = df[df["Cidade"] != "Não informada"]
-            if not df_cidades.empty:
-                df_cidades = df_cidades.groupby("Cidade")["Pacotes"].sum().reset_index()
-                df_cidades = df_cidades.rename(columns={"Pacotes": "Volume de Pacotes"})
-                st.bar_chart(data=df_cidades, x="Cidade", y="Volume de Pacotes", use_container_width=True)
-            else:
-                st.info("Lance a sua primeira rota com o nome da cidade para gerar este gráfico.")
-        
-        st.markdown("---")
-        st.markdown("#### 🏢 Desempenho por Plataforma")
-        
-        df_plataforma = df.groupby("Plataforma")[["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"]].sum().reset_index()
-        df_plataforma = df_plataforma.rename(columns={
-            "Faturamento Bruto (R$)": "Faturamento Bruto",
-            "Custo_Total": "Gastos Operacionais",
-            "Lucro_Linha": "Lucro Líquido Real"
-        })
-        
-        st.bar_chart(
-            data=df_plataforma.set_index("Plataforma"),
-            color=["#4caf50", "#f44336", "#2196f3"],
-            use_container_width=True
-        )
+        with aba_dash:
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                st.markdown("#### Evolução Financeira")
+                st.line_chart(df.groupby("Data")[["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"]].sum().reset_index(), x="Data", y=["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"], color=["#4caf50", "#f44336", "#2196f3"])
+            with col_g2:
+                st.markdown("#### Lucro por Plataforma")
+                df_plat = df.groupby("Plataforma")[["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"]].sum()
+                st.bar_chart(df_plat, color=["#4caf50", "#f44336", "#2196f3"])
                 
-        # --- NOVO: GERADOR DE RELATÓRIOS INTELIGENTE ---
-        st.markdown("---")
-        st.markdown("#### 📥 Central de Relatórios do Mês")
-        st.write("Exporte a inteligência de negócios da sua operação já formatada e calculada.")
-        
-        col_btn1, col_btn2 = st.columns(2)
-        
-        # 1. Exportação Detalhada (Com as colunas inteligentes)
-        df_detalhado = df.copy()
-        df_detalhado = df_detalhado.rename(columns={
-            "Custo_Total": "Gastos Totais (R$)",
-            "Lucro_Linha": "Lucro Líquido Real (R$)",
-            "Custo_Desgaste": "Desgaste Veículo (R$)",
-            "Litros_Consumidos": "Litros Consumidos",
-            "Horas_Duracao": "Horas Trabalhadas"
-        }).drop(columns=["Mes_Ano"], errors='ignore')
-        
-        csv_detalhado = df_detalhado.to_csv(index=False).encode('utf-8')
-        nome_detalhado = f"Detalhado_{mes_selecionado.replace('/', '_')}.csv" if mes_selecionado != "Todos" else "Detalhado_Completo.csv"
-        
-        with col_btn1:
-            st.download_button(
-                label="📄 Baixar Histórico Detalhado (Todas as Rotas)",
-                data=csv_detalhado,
-                file_name=nome_detalhado,
-                mime="text/csv",
-                type="secondary",
-                use_container_width=True
-            )
-            
-        # 2. Exportação Consolidada por Plataforma
-        df_resumo_plat = df.groupby("Plataforma").agg({
-            "Faturamento Bruto (R$)": "sum",
-            "Custo_Total": "sum",
-            "Lucro_Linha": "sum",
-            "KM Rodado": "sum",
-            "Pacotes": "sum",
-            "Paradas": "sum"
-        }).reset_index()
-        
-        df_resumo_plat = df_resumo_plat.rename(columns={
-            "Custo_Total": "Gastos Operacionais (R$)",
-            "Lucro_Linha": "Lucro Líquido Real (R$)"
-        })
-        
-        csv_resumo = df_resumo_plat.to_csv(index=False).encode('utf-8')
-        nome_resumo = f"Resumo_Plataformas_{mes_selecionado.replace('/', '_')}.csv" if mes_selecionado != "Todos" else "Resumo_Plataformas_Completo.csv"
-        
-        with col_btn2:
-            st.download_button(
-                label="📊 Baixar Resumo por Plataforma (Consolidado)",
-                data=csv_resumo,
-                file_name=nome_resumo,
-                mime="text/csv",
-                type="primary",
-                use_container_width=True
-            )
-
-    with aba_historico:
-        for i, row in df.iterrows():
-            with st.container():
-                c_info, c_edit, c_del = st.columns([7, 1, 1])
-                
-                tempo_str = f"{int(row['Horas_Duracao'])}h {int((row['Horas_Duracao']%1)*60)}min"
-                p_hora = row['Paradas'] / row['Horas_Duracao'] if row['Horas_Duracao'] > 0 else 0
-                
-                lucro_rota_km = row['Lucro_Linha'] / row['KM Rodado'] if row['KM Rodado'] > 0 else 0
-                cidade_exibicao = f" — 📍 **{row['Cidade']}**" if str(row['Cidade']) != "Não informada" else ""
-                
-                preco_litro_rota = row['Combustível (R$)'] / row['Litros_Consumidos'] if row['Litros_Consumidos'] > 0 else 0
-                
-                c_info.markdown(
-                    f"**ID {row['ID']} | {row['Data']}** — **{row['Plataforma']}** {cidade_exibicao} | "
-                    f"📦 {int(row['Pacotes'])} pac. | 🛑 {int(row['Paradas'])} paradas (**{p_hora:.1f}/h**) | "
-                    f"⏱️ {tempo_str} | 🛣️ {row['KM Rodado']} KM a {int(row['Consumo (km/L)'])}km/L<br>"
-                    f"💸 Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | ⛽ Combust. (R$ {preco_litro_rota:.2f}/L) | 🛠️ Total Gastos: **R$ {row['Custo_Total']:.2f}** | 🏆 Lucro/KM: **R$ {lucro_rota_km:.2f}**",
-                    unsafe_allow_html=True
-                )
-                
-                if c_edit.button("✏️ Editar", key=f"edit_{row['ID']}", use_container_width=True):
-                    st.session_state.modo_edicao = True
-                    st.session_state.id_edicao = row["ID"]
+        with aba_hist:
+            for i, row in df.iterrows():
+                c1, c2, c3 = st.columns([8, 1, 1])
+                c1.markdown(f"**{row['Data']}** | {row['Plataforma']} 📍 {row['Cidade']} | 📦 {row['Pacotes']} pac.<br>Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | Gastos: R$ {row['Custo_Total']:.2f} | Lucro: **R$ {row['Lucro_Linha']:.2f}**", unsafe_allow_html=True)
+                if c2.button("✏️", key=f"e_{row['ID']}"): st.session_state.modo_edicao = True; st.session_state.id_edicao = row["ID"]; st.rerun()
+                if c3.button("🗑️", key=f"d_{row['ID']}"): 
+                    with engine.begin() as conn: conn.execute(text("DELETE FROM entregas_logistica WHERE id=:id AND usuario_id=:uid"), {"id": int(row["ID"]), "uid": st.session_state.usuario_id})
                     st.rerun()
-                    
-                if c_del.button("🗑️ Apagar", key=f"del_{row['ID']}", type="primary", use_container_width=True):
-                    with engine.begin() as conn:
-                        conn.execute(text("DELETE FROM entregas_logistica WHERE id=:id"), {"id": int(row["ID"])})
-                    st.rerun()
-                st.markdown("<hr style='margin: 0.8em 0px; border: 1px solid #333;'>", unsafe_allow_html=True)
+                st.markdown("<hr style='margin: 0.5em 0;'>", unsafe_allow_html=True)
+    else:
+        st.info("Nenhuma entrega encontrada para este usuário neste mês.")
+
+# --- ROTEAMENTO PRINCIPAL ---
+if st.session_state.logado:
+    aplicativo_principal()
 else:
-    st.info(f"Nenhum dado registrado para {mes_selecionado}. Preencha o formulário para lançar a sua primeira rota deste mês!")
+    tela_login()
