@@ -115,14 +115,6 @@ def aplicativo_principal():
             st.error(f"Erro de Conexão: {e}")
             return pd.DataFrame()
 
-    def calcular_horas_decimais(h_ini, h_fim):
-        fmt = "%H:%M:%S"
-        try:
-            diferenca = datetime.strptime(str(h_fim), fmt) - datetime.strptime(str(h_ini), fmt)
-            segundos = diferenca.total_seconds()
-            return (segundos + 24 * 3600 if segundos < 0 else segundos) / 3600
-        except: return 0.0
-
     df_full = carregar_dados_usuario(st.session_state.usuario_id)
 
     if "modo_edicao" not in st.session_state:
@@ -230,7 +222,6 @@ def aplicativo_principal():
         mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", [mes_atual_sistema, "Todos"] + [m for m in meses_unicos if m != mes_atual_sistema])
         df = df_full[df_full['Mes_Ano'] == mes_selecionado].copy() if mes_selecionado != "Todos" else df_full.copy()
         
-        # Pré-cálculo de Custos e Lucros para que os relatórios exportados já contenham essas informações
         df["Custo_Total"] = df["Combustível (R$)"] + df["Pedágio (R$)"] + (df["KM Rodado"] * TAXA_DESGASTE_KM)
         df["Lucro_Linha"] = df["Faturamento Bruto (R$)"] - df["Custo_Total"]
 
@@ -243,16 +234,19 @@ def aplicativo_principal():
                 if mes_anterior:
                     df_anterior = df_full[df_full['Mes_Ano'] == mes_anterior]
                     fat_anterior = df_anterior["Faturamento Bruto (R$)"].sum()
-                    lucro_anterior = fat_anterior - (df_anterior["Combustível (R$)"].sum() + df_anterior["Pedágio (R$)"].sum() + (df_anterior["KM Rodado"].sum() * TAXA_DESGASTE_KM))
+                    gastos_anterior = df_anterior["Combustível (R$)"].sum() + df_anterior["Pedágio (R$)"].sum() + (df_anterior["KM Rodado"].sum() * TAXA_DESGASTE_KM)
+                    lucro_anterior = fat_anterior - gastos_anterior
                     rotas_anterior = len(df_anterior)
+                    pacotes_anterior = int(df_anterior["Pacotes"].sum())
+                    km_anterior = df_anterior["KM Rodado"].sum()
                 else:
-                    fat_anterior, lucro_anterior, rotas_anterior = 0, 0, 0
+                    fat_anterior, gastos_anterior, lucro_anterior, rotas_anterior, pacotes_anterior, km_anterior = 0, 0, 0, 0, 0, 0
             except:
-                 fat_anterior, lucro_anterior, rotas_anterior = 0, 0, 0
+                 fat_anterior, gastos_anterior, lucro_anterior, rotas_anterior, pacotes_anterior, km_anterior = 0, 0, 0, 0, 0, 0
         else:
-            fat_anterior, lucro_anterior, rotas_anterior = 0, 0, 0
+            fat_anterior, gastos_anterior, lucro_anterior, rotas_anterior, pacotes_anterior, km_anterior = 0, 0, 0, 0, 0, 0
             
-        # --- CÁLCULO DO PÓDIO (MAIOR E MENOR MÊS) ---
+        # --- CÁLCULO DO PÓDIO ---
         df_agrupado_mes = df_full.groupby('Mes_Ano')['Faturamento Bruto (R$)'].sum().reset_index()
         if not df_agrupado_mes.empty and len(df_agrupado_mes) > 0:
             mes_maior_fatura = df_agrupado_mes.loc[df_agrupado_mes['Faturamento Bruto (R$)'].idxmax()]
@@ -264,34 +258,19 @@ def aplicativo_principal():
             if len(df_agrupado_mes) > 1:
                 st.sidebar.error(f"**Menor Mês:** {mes_menor_fatura['Mes_Ano']}\n\nR$ {mes_menor_fatura['Faturamento Bruto (R$)']:,.2f}")
                 
-        # --- EXPORTAÇÃO DE RELATÓRIOS (RESTABELECIDA) ---
+        # --- EXPORTAÇÃO DE RELATÓRIOS ---
         st.sidebar.markdown("---")
         st.sidebar.markdown("### 📥 Exportar Dados")
-        
-        # Criação do CSV Total
         csv_total = df.drop(columns=['Mes_Ano', 'Ano_Mes_Sort', 'usuario_id'], errors='ignore').to_csv(index=False).encode('utf-8')
-        st.sidebar.download_button(
-            label="⬇️ Relatório Mensal (CSV)",
-            data=csv_total,
-            file_name=f"relatorio_logistica_{mes_selecionado.replace('/','_')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        st.sidebar.download_button(label="⬇️ Relatório Mensal (CSV)", data=csv_total, file_name=f"relatorio_logistica_{mes_selecionado.replace('/','_')}.csv", mime="text/csv", use_container_width=True)
         
-        # Criação do CSV por Plataforma
         df_plat_export = df.groupby("Plataforma")[["Faturamento Bruto (R$)", "Custo_Total", "Lucro_Linha"]].sum().reset_index()
         csv_plat = df_plat_export.to_csv(index=False).encode('utf-8')
-        st.sidebar.download_button(
-            label="⬇️ Resumo Plataformas (CSV)",
-            data=csv_plat,
-            file_name=f"resumo_plataforma_{mes_selecionado.replace('/','_')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        st.sidebar.download_button(label="⬇️ Resumo Plataformas (CSV)", data=csv_plat, file_name=f"resumo_plataforma_{mes_selecionado.replace('/','_')}.csv", mime="text/csv", use_container_width=True)
     else:
         df = pd.DataFrame()
         mes_selecionado = st.sidebar.selectbox("Filtrar por Mês", [mes_atual_sistema, "Todos"])
-        fat_anterior, lucro_anterior, rotas_anterior = 0, 0, 0
+        fat_anterior, gastos_anterior, lucro_anterior, rotas_anterior, pacotes_anterior, km_anterior = 0, 0, 0, 0, 0, 0
 
     # --- MÉTRICAS GLOBAIS DA TELA ---
     t_fat = df["Faturamento Bruto (R$)"].sum() if not df.empty else 0.0
@@ -304,29 +283,91 @@ def aplicativo_principal():
     qtd_rotas = len(df)
     total_pacotes = int(df["Pacotes"].sum()) if not df.empty else 0
 
-    def calc_delta(atual, anterior):
-        if anterior == 0 and atual > 0: return "100%"
-        if anterior == 0 and atual == 0: return "0%"
-        var = ((atual - anterior) / anterior) * 100
-        return f"{var:,.1f}%"
+    # MOTOR INTELIGENTE DE DELTA (Padrão Bolsa de Valores)
+    def get_delta_info(atual, anterior, invertido=False):
+        if anterior == 0 and atual > 0: val = 100.0
+        elif anterior == 0 and atual == 0: val = 0.0
+        else: val = ((atual - anterior) / anterior) * 100
 
-    delta_fat = calc_delta(t_fat, fat_anterior) if mes_selecionado != "Todos" and fat_anterior != 0 else None
-    delta_lucro = calc_delta(t_lucro, lucro_anterior) if mes_selecionado != "Todos" and lucro_anterior != 0 else None
-    delta_rotas = calc_delta(qtd_rotas, rotas_anterior) if mes_selecionado != "Todos" and rotas_anterior != 0 else None
+        if val > 0:
+            cor = "#f44336" if invertido else "#4caf50" # Se for gasto invertido, aumento é vermelho
+            ic = "⬆️"
+        elif val < 0:
+            cor = "#4caf50" if invertido else "#f44336" # Se for gasto invertido, queda é verde
+            ic = "⬇️"
+        else:
+            cor = "#9e9e9e"
+            ic = "➖"
+        return cor, ic, f"{abs(val):,.1f}"
 
+    c_fat, i_fat, v_fat = get_delta_info(t_fat, fat_anterior)
+    c_gas, i_gas, v_gas = get_delta_info(t_gastos, gastos_anterior, invertido=True)
+    c_luc, i_luc, v_luc = get_delta_info(t_lucro, lucro_anterior)
+    c_rot, i_rot, v_rot = get_delta_info(qtd_rotas, rotas_anterior)
+    c_pac, i_pac, v_pac = get_delta_info(total_pacotes, pacotes_anterior)
+    c_km, i_km, v_km = get_delta_info(t_km, km_anterior, invertido=True)
+
+    def formatar_html_delta(cor, icone, valor, exibir):
+        if not exibir: return '<div style="height: 24px;"></div>'
+        return f'''
+        <div style="margin-top: 8px;">
+            <span style="background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px; font-size: 0.9rem; font-weight: bold; color: {cor};">
+                {icone} {valor}% <span style="font-size: 0.75rem; color: #94a3b8; font-weight: normal;">vs mês ant.</span>
+            </span>
+        </div>
+        '''
+
+    exibir_deltas = mes_selecionado != "Todos"
+    html_delta_fat = formatar_html_delta(c_fat, i_fat, v_fat, exibir_deltas)
+    html_delta_gas = formatar_html_delta(c_gas, i_gas, v_gas, exibir_deltas)
+    html_delta_luc = formatar_html_delta(c_luc, i_luc, v_luc, exibir_deltas)
+    html_delta_rot = formatar_html_delta(c_rot, i_rot, v_rot, exibir_deltas)
+    html_delta_pac = formatar_html_delta(c_pac, i_pac, v_pac, exibir_deltas)
+    html_delta_km = formatar_html_delta(c_km, i_km, v_km, exibir_deltas)
+
+    # RENDENRIZAÇÃO DOS CARTÕES FINANCEIROS HTML (Design Centralizado com Cores e Deltas Separados)
     st.markdown("### 💰 Resultado Financeiro")
-    col_fin1, col_fin2, col_fin3 = st.columns(3)
-    col_fin1.metric("Faturamento Bruto", f"R$ {t_fat:,.2f}", delta_fat)
-    col_fin2.metric("Gastos Operacionais", f"R$ {t_gastos:,.2f}", delta=None) 
-    col_fin3.metric("Lucro Líquido Real", f"R$ {t_lucro:,.2f}", delta_lucro)
+    st.markdown(f"""
+    <div style="display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <h4 style="margin:0; color:#a5d6a7; font-weight: 500;">Faturamento Bruto</h4>
+            <h2 style="margin:10px 0 5px 0; color:#4caf50; font-size: 2.2rem;">R$ {t_fat:,.2f}</h2>
+            {html_delta_fat}
+        </div>
+        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #f44336; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <h4 style="margin:0; color:#ef9a9a; font-weight: 500;">Gastos Operacionais</h4>
+            <h2 style="margin:10px 0 5px 0; color:#f44336; font-size: 2.2rem;">R$ {t_gastos:,.2f}</h2>
+            {html_delta_gas}
+        </div>
+        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <h4 style="margin:0; color:#90caf9; font-weight: 500;">Lucro Líquido Real</h4>
+            <h2 style="margin:10px 0 5px 0; color:#2196f3; font-size: 2.2rem;">R$ {t_lucro:,.2f}</h2>
+            {html_delta_luc}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.markdown("---")
-    st.markdown("### 📦 Esforço Operacional")
-    col_op1, col_op2, col_op3 = st.columns(3)
-    col_op1.metric("🚚 Rotas Realizadas", f"{qtd_rotas} rotas", delta_rotas)
-    col_op2.metric("📦 Volume Entregue", f"{total_pacotes} pacotes")
-    col_op3.metric("🛣️ Distância Percorrida", f"{t_km:,.1f} KM")
-    st.markdown("<br>", unsafe_allow_html=True)
+    # RENDENRIZAÇÃO DOS CARTÕES OPERACIONAIS HTML (Design Centralizado com Cores e Deltas Separados)
+    st.markdown("### 📦 Indicadores de Produtividade")
+    st.markdown(f"""
+    <div style="display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #ff9800; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <h4 style="margin:0; color:#ffcc80; font-weight: 500;">Rotas Concluídas</h4>
+            <h2 style="margin:10px 0 5px 0; color:#ff9800; font-size: 2.2rem;">{qtd_rotas}</h2>
+            {html_delta_rot}
+        </div>
+        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #9c27b0; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <h4 style="margin:0; color:#ce93d8; font-weight: 500;">Volume Entregue</h4>
+            <h2 style="margin:10px 0 5px 0; color:#9c27b0; font-size: 2.2rem;">{total_pacotes} pacotes</h2>
+            {html_delta_pac}
+        </div>
+        <div style="flex: 1; min-width: 200px; background: #1e293b; padding: 20px; border-radius: 10px; border-left: 6px solid #ff5722; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <h4 style="margin:0; color:#ffab91; font-weight: 500;">Distância Percorrida</h4>
+            <h2 style="margin:10px 0 5px 0; color:#ff5722; font-size: 2.2rem;">{t_km:,.1f} KM</h2>
+            {html_delta_km}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     aba_dash, aba_hist = st.tabs(["📊 Dashboard Analítico", "🗄️ Histórico de Rotas"])
 
