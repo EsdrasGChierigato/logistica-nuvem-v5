@@ -69,6 +69,17 @@ if st.session_state.modo_edicao:
     
     ini_time = datetime.strptime(linha_editar["Hora Início"], "%H:%M:%S").time()
     fim_time = datetime.strptime(linha_editar["Hora Término"], "%H:%M:%S").time()
+    
+    # Faz a engenharia reversa para descobrir qual era o preço do litro quando a rota foi salva
+    km_edit = float(linha_editar["KM Rodado"])
+    cons_edit = int(linha_editar["Consumo (km/L)"])
+    comb_total_edit = float(linha_editar["Combustível (R$)"])
+    if km_edit > 0 and cons_edit > 0:
+        litros_edit = km_edit / cons_edit
+        preco_litro_padrao = comb_total_edit / litros_edit if litros_edit > 0 else 5.80
+    else:
+        preco_litro_padrao = 5.80
+
 else:
     st.sidebar.header("🗺️ Dados da Rota")
     data_padrao = datetime.now()
@@ -78,6 +89,7 @@ else:
     cons_idx = 3 
     ini_time = time(6, 0)
     fim_time = time(14, 0)
+    preco_litro_padrao = 5.80
 
 with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
     data_entrega = st.date_input("Data da Rota", data_padrao)
@@ -96,7 +108,7 @@ with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
     
     st.markdown("**⛽ Veículo e Rodagem**")
     col_E, col_F = st.columns(2)
-    combustivel = col_E.number_input("Gasto Combust. (R$)", min_value=0.0, format="%.2f", value=float(linha_editar["Combustível (R$)"]) if st.session_state.modo_edicao else 0.0)
+    preco_litro_input = col_E.number_input("Preço do Litro (R$)", min_value=0.0, format="%.2f", value=float(preco_litro_padrao))
     tipo_comb = col_F.selectbox("Combustível", ["Gasolina", "Etanol"], index=comb_idx)
     
     col_km, col_cons = st.columns(2)
@@ -112,6 +124,10 @@ with st.sidebar.form(key="formulario_entrega", clear_on_submit=True):
     botao_salvar = st.form_submit_button(label=label_botao, use_container_width=True)
 
 if botao_salvar:
+    # A IA do sistema agora calcula o Gasto Total de Combustível sozinha para salvar no banco
+    litros_gastos = km_rodado / consumo_carro if consumo_carro > 0 else 0
+    custo_combustivel_total = litros_gastos * preco_litro_input
+
     nova_linha_bd = {
         "data": data_entrega.strftime("%Y-%m-%d"),
         "plataforma": plataforma,
@@ -120,7 +136,7 @@ if botao_salvar:
         "paradas": qtd_paradas,
         "faturamento_bruto": faturamento,
         "pedagio": pedagio,
-        "combustivel": combustivel,
+        "combustivel": custo_combustivel_total, # Salva o custo matematicamente correto
         "tipo_combustivel": tipo_comb,
         "consumo_kml": consumo_carro,
         "km_rodado": km_rodado,
@@ -185,15 +201,15 @@ lucro_liquido_real = total_faturamento - total_gastos
 st.markdown(f"""
 <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px;">
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #4caf50; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #a5d6a7;">💰 Faturamento Bruto ({mes_selecionado})</h3>
+        <h3 style="margin: 0; font-weight: 500; color: #a5d6a7;">💰 Faturamento Bruto</h3>
         <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #4caf50;">R$ {total_faturamento:,.2f}</h1>
     </div>
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #f44336; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #ef9a9a;">🔻 Gastos Operacionais ({mes_selecionado})</h3>
+        <h3 style="margin: 0; font-weight: 500; color: #ef9a9a;">🔻 Gastos Operacionais</h3>
         <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #f44336;">R$ {total_gastos:,.2f}</h1>
     </div>
     <div style="flex: 1; background-color: #1e293b; padding: 25px; border-radius: 12px; border-left: 8px solid #2196f3; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real ({mes_selecionado})</h3>
+        <h3 style="margin: 0; font-weight: 500; color: #90caf9;">📈 Lucro Líquido Real</h3>
         <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: #2196f3;">R$ {lucro_liquido_real:,.2f}</h1>
     </div>
 </div>
@@ -217,14 +233,15 @@ if not df.empty:
     paradas_hora = df["Paradas"].sum() / total_horas if total_horas > 0 else 0
     pacotes_hora = total_pacotes / total_horas if total_horas > 0 else 0
     custo_km = total_gastos / total_km_global if total_km_global > 0 else 0
-    preco_litro = total_combustivel / total_litros if total_litros > 0 else 0
+    
+    preco_litro_medio = total_combustivel / total_litros if total_litros > 0 else 0
     lucro_por_km = lucro_liquido_real / total_km_global if total_km_global > 0 else 0
 
     with aba_dashboard:
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("📦 Desempenho", f"{pacotes_hora:.1f} pac/h", f"{total_pacotes} Pac. no Mês")
-        col2.metric("⛽ Custo de Rodagem (Com Desgaste)", f"R$ {custo_km:.2f} / KM", f"{total_km_global:,.1f} KM Totais")
-        col3.metric("💧 Combustível", f"{total_litros:.1f} L consumidos", f"R$ {preco_litro:.2f} / L")
+        col2.metric("⛽ Custo de Rodagem", f"R$ {custo_km:.2f} / KM", f"{total_km_global:,.1f} KM Totais")
+        col3.metric("💧 Preço Médio Combust.", f"R$ {preco_litro_medio:.2f} / L", f"{total_litros:.1f} L consumidos")
         col4.metric("🏆 Lucro Médio Real", f"R$ {lucro_por_km:.2f} / KM", "Pós-manutenção")
         
         st.markdown("---")
@@ -245,7 +262,6 @@ if not df.empty:
             else:
                 st.info("Lance a sua primeira rota com o nome da cidade para gerar este gráfico.")
         
-        # --- NOVO: GRÁFICO POR PLATAFORMA ---
         st.markdown("---")
         st.markdown("#### 🏢 Desempenho por Plataforma")
         
@@ -264,7 +280,6 @@ if not df.empty:
                 
         st.markdown("---")
         st.markdown("#### 📥 Exportar Resumo Mensal")
-        st.write("Baixe a planilha com os dados filtrados deste mês para montar as suas artes e relatórios.")
         
         df_export = df.drop(columns=["Mes_Ano", "Litros_Consumidos", "Horas_Duracao", "Lucro_Linha", "Custo_Total", "Custo_Desgaste"], errors='ignore')
         csv = df_export.to_csv(index=False).encode('utf-8')
@@ -290,11 +305,14 @@ if not df.empty:
                 lucro_rota_km = row['Lucro_Linha'] / row['KM Rodado'] if row['KM Rodado'] > 0 else 0
                 cidade_exibicao = f" — 📍 **{row['Cidade']}**" if str(row['Cidade']) != "Não informada" else ""
                 
+                # Para mostrar o preço do litro exato que foi usado nesta rota específica
+                preco_litro_rota = row['Combustível (R$)'] / row['Litros_Consumidos'] if row['Litros_Consumidos'] > 0 else 0
+                
                 c_info.markdown(
                     f"**ID {row['ID']} | {row['Data']}** — **{row['Plataforma']}** {cidade_exibicao} | "
                     f"📦 {int(row['Pacotes'])} pac. | 🛑 {int(row['Paradas'])} paradas (**{p_hora:.1f}/h**) | "
                     f"⏱️ {tempo_str} | 🛣️ {row['KM Rodado']} KM a {int(row['Consumo (km/L)'])}km/L<br>"
-                    f"💸 Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | 🛠️ Gastos: **R$ {row['Custo_Total']:.2f}** | 🏆 Lucro/KM Real: **R$ {lucro_rota_km:.2f}**",
+                    f"💸 Faturou: **R$ {row['Faturamento Bruto (R$)']:.2f}** | ⛽ Combust. (R$ {preco_litro_rota:.2f}/L) | 🛠️ Total Gastos: **R$ {row['Custo_Total']:.2f}** | 🏆 Lucro/KM: **R$ {lucro_rota_km:.2f}**",
                     unsafe_allow_html=True
                 )
                 
